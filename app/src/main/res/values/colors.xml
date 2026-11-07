@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="uno_red">#EE2737</color>
+    <color name="uno_yellow">#FFCC00</color>
+    <color name="uno_green">#00A651</color>
+    <color name="uno_blue">#0072BC</color>
+    <color name="uno_wild_black">#1A1A1A</color>
+    <color name="uno_bg_red">#FF1B04</color>
+    <color name="uno_bg_dark">#9E0E00</color>
+    <color name="uno_gold">#FFD700</color>
+</resources>

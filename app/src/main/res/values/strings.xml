@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">UNO Royale: 2-Player Duels</string>
+    <string name="quick_play">Quick Play vs AI</string>
+    <string name="play_with_friends">Pass &amp; Play / 2-Player</string>
+    <string name="house_rules">Custom House Rules</string>
+    <string name="how_to_play">How To Play</string>
+    <string name="surprise_gift">Daily Gift</string>
+    <string name="settings">Settings</string>
+    <string name="call_uno">CALL UNO!</string>
+    <string name="catch_uno">CATCH UNO!</string>
+    <string name="draw_card">Draw Card</string>
+</resources>

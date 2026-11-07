@@ -1,0 +1,732 @@
+package com.example.uno.ui
+
+import androidx.activity.compose.BackHandler
+import androidx.compose.animation.*
+import androidx.compose.animation.core.*
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.draw.scale
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.example.uno.model.*
+import com.example.uno.ui.components.*
+import com.example.uno.ui.theme.*
+
+@Composable
+fun GameArenaScreen(
+    gameState: GameState,
+    localPlayerId: String,
+    shakingCardId: String?,
+    flightAnimation: CardFlightAnimation?,
+    activeEmotes: Map<String, EmoteMessage>,
+    isMuted: Boolean,
+    isMusicOn: Boolean,
+    onPlayCard: (String, CardColor?) -> Unit,
+    onDrawCard: () -> Unit,
+    onSkipTurn: () -> Unit,
+    onClearFlightAnimation: () -> Unit,
+    onCallUno: () -> Unit,
+    onCatchUno: () -> Unit,
+    onSendEmote: (String, String) -> Unit,
+    onToggleSound: () -> Unit,
+    onToggleMusic: () -> Unit,
+    onRematch: () -> Unit,
+    onLeaveGame: () -> Unit
+) {
+    var showPauseMenu by remember { mutableStateOf(false) }
+    var pendingWildCardId by remember { mutableStateOf<String?>(null) }
+    var showEmotePicker by remember { mutableStateOf(false) }
+
+    BackHandler {
+        showPauseMenu = true
+    }
+
+    val localPlayerIndex = gameState.players.indexOfFirst { it.id == localPlayerId }.let { if (it == -1) 0 else it }
+    val opponentIndex = 1 - localPlayerIndex
+
+    val localPlayer = gameState.players[localPlayerIndex]
+    val opponent = gameState.players[opponentIndex]
+    val isLocalTurn = gameState.currentTurnIndex == localPlayerIndex
+    val topCard = gameState.discardPile.lastOrNull()
+
+    val canCallUno = localPlayer.hand.size <= 2 && !localPlayer.unoCalled
+    val canCatchOpponent = gameState.unoCatchablePlayerId == opponent.id
+
+    val localEmote = activeEmotes[localPlayer.id]
+    val opponentEmote = activeEmotes[opponent.id]
+
+    // Turn ring rotation animation (indicates play direction as seen in 3.jpg)
+    val infiniteTransition = rememberInfiniteTransition(label = "turn_direction_spin")
+    val directionRotation by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = if (gameState.direction > 0) 360f else -360f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(12000, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "turn_spin"
+    )
+
+    // Breathing pulse for active turn countdown
+    val countdownPulse by infiniteTransition.animateFloat(
+        initialValue = 1f,
+        targetValue = if (gameState.turnSecondsRemaining <= 5) 1.12f else 1.04f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(if (gameState.turnSecondsRemaining <= 5) 400 else 850, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "countdown_pulse"
+    )
+
+    // Countdown color transition from Green (20s..12s) to Yellow (11s..6s) to Red (5s..0s)
+    val secondsRemaining = gameState.turnSecondsRemaining
+    val countdownColor = when {
+        secondsRemaining <= 5 -> Color(0xFFFF1744) // Intense Red
+        secondsRemaining <= 11 -> Color(0xFFFFD600) // Warning Yellow
+        else -> Color(0xFF00E676) // Vibrant Green
+    }
+
+    val activeColorHex = when (gameState.activeColor) {
+        CardColor.RED -> UnoRed
+        CardColor.BLUE -> UnoBlue
+        CardColor.GREEN -> UnoGreen
+        CardColor.YELLOW -> UnoYellow
+        CardColor.WILD -> UnoWildBlack
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(
+                Brush.radialGradient(
+                    colors = listOf(Color(0xFF009EB3), Color(0xFF00758A), Color(0xFF004D5C)),
+                    radius = 1400f
+                )
+            )
+            .statusBarsPadding()
+            .navigationBarsPadding()
+            .testTag("game_arena_screen")
+    ) {
+        Column(
+            modifier = Modifier.fillMaxSize(),
+            verticalArrangement = Arrangement.SpaceBetween
+        ) {
+            // ========================================================
+            // 1. TOP BAR (Squircle Back, Sound, Music, Active Color - NO COINS)
+            // ========================================================
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 14.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Left controls: Back button, Sound, Music
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    // Yellow Squircle Back Button
+                    Box(
+                        modifier = Modifier
+                            .size(42.dp)
+                            .shadow(4.dp, RoundedCornerShape(12.dp))
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(UnoYellow)
+                            .border(1.5.dp, Color(0xFFD49E00), RoundedCornerShape(12.dp))
+                            .clickable { showPauseMenu = true }
+                            .testTag("arena_back_button"),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Exit / Pause",
+                            tint = Color.Black,
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
+
+                    // Sound Toggle Button
+                    Box(
+                        modifier = Modifier
+                            .size(38.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFF004D5C).copy(alpha = 0.85f))
+                            .border(1.dp, Color.White.copy(alpha = 0.4f), CircleShape)
+                            .clickable(onClick = onToggleSound),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            if (isMuted) Icons.Default.VolumeOff else Icons.Default.VolumeUp,
+                            contentDescription = "Sound",
+                            tint = if (isMuted) Color.White.copy(alpha = 0.5f) else Color.White,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+
+                    // Music Toggle Button
+                    Box(
+                        modifier = Modifier
+                            .size(38.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFF004D5C).copy(alpha = 0.85f))
+                            .border(1.dp, Color.White.copy(alpha = 0.4f), CircleShape)
+                            .clickable(onClick = onToggleMusic),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            if (isMusicOn) Icons.Default.MusicNote else Icons.Default.MusicOff,
+                            contentDescription = "Music",
+                            tint = if (isMusicOn) UnoYellow else Color.White.copy(alpha = 0.5f),
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+
+                // Center-Right: Active Color Pill Indicator (NO COINS)
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(Color.Black.copy(alpha = 0.6f))
+                        .border(2.dp, activeColorHex, RoundedCornerShape(16.dp))
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(12.dp)
+                            .clip(CircleShape)
+                            .background(activeColorHex)
+                            .border(1.dp, Color.White, CircleShape)
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        text = gameState.activeColor.displayName.uppercase(),
+                        color = Color.White,
+                        fontWeight = FontWeight.Black,
+                        fontSize = 12.sp
+                    )
+                }
+            }
+
+            // Bot takeover notification banner if active
+            if (gameState.isBotTakeover) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Color(0xFF8B2500))
+                        .padding(vertical = 4.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "🤖 Player offline - Bot playing",
+                        color = Color.White,
+                        fontWeight = FontWeight.Black,
+                        fontSize = 12.sp
+                    )
+                }
+            }
+
+            // ========================================================
+            // 2. OPPONENT SECTION (Top-Left, with Countdown border when active)
+            // ========================================================
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp)
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.align(Alignment.TopStart)
+                ) {
+                    // 20s Countdown badge around opponent when it's their turn
+                    if (!isLocalTurn) {
+                        Box(
+                            modifier = Modifier
+                                .scale(countdownPulse)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(countdownColor)
+                                .padding(horizontal = 8.dp, vertical = 2.dp)
+                        ) {
+                            Text(
+                                text = "⏱️ ${secondsRemaining}s",
+                                color = Color.Black,
+                                fontWeight = FontWeight.Black,
+                                fontSize = 11.sp
+                            )
+                        }
+                        Spacer(Modifier.height(4.dp))
+                    }
+
+                    Box(contentAlignment = Alignment.BottomEnd) {
+                        // Square Avatar Box with dynamic 20s countdown border (Green -> Yellow -> Red)
+                        Box(
+                            modifier = Modifier
+                                .size(64.dp)
+                                .then(
+                                    if (!isLocalTurn) {
+                                        Modifier
+                                            .scale(countdownPulse)
+                                            .shadow(12.dp, RoundedCornerShape(18.dp), spotColor = countdownColor)
+                                    } else Modifier
+                                )
+                                .clip(RoundedCornerShape(18.dp))
+                                .background(UnoRed)
+                                .border(
+                                    width = if (!isLocalTurn) 3.5.dp else 2.dp,
+                                    color = if (!isLocalTurn) countdownColor else Color.White.copy(alpha = 0.4f),
+                                    shape = RoundedCornerShape(18.dp)
+                                ),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(opponent.avatar, fontSize = 34.sp)
+                        }
+
+                        // Remaining cards count badge in bottom-right corner
+                        Box(
+                            modifier = Modifier
+                                .offset(x = 6.dp, y = 6.dp)
+                                .shadow(4.dp, RoundedCornerShape(6.dp))
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(Color(0xFF0072BC))
+                                .border(1.dp, Color.White, RoundedCornerShape(6.dp))
+                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                        ) {
+                            Text(
+                                text = "${opponent.hand.size}",
+                                color = Color.White,
+                                fontWeight = FontWeight.Black,
+                                fontSize = 12.sp
+                            )
+                        }
+                    }
+
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = opponent.name,
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 13.sp
+                    )
+                    if (opponent.unoCalled) {
+                        Text(
+                            text = "UNO!",
+                            color = UnoGold,
+                            fontWeight = FontWeight.Black,
+                            fontSize = 11.sp
+                        )
+                    }
+                }
+
+                // Opponent Emote if active
+                opponentEmote?.let { em ->
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopCenter)
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(Color.White)
+                            .padding(horizontal = 12.dp, vertical = 6.dp)
+                    ) {
+                        Text("${em.emoji} ${em.text}", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                    }
+                }
+            }
+
+            // ========================================================
+            // 3. CENTER PLAY ARENA (Glowing Direction Ring + Center Discard)
+            // ========================================================
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(200.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                // Glowing Turn Direction Ring with Rotation Arrows
+                Box(
+                    modifier = Modifier
+                        .size(175.dp)
+                        .rotate(directionRotation),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(170.dp)
+                            .border(3.5.dp, Color(0xFFFFEB3B), CircleShape)
+                    )
+
+                    Text(
+                        text = "➔",
+                        color = Color(0xFFFF6D00),
+                        fontSize = 28.sp,
+                        fontWeight = FontWeight.Black,
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .offset(x = 4.dp, y = (-2).dp)
+                            .rotate(45f)
+                    )
+                    Text(
+                        text = "➔",
+                        color = Color(0xFFFF6D00),
+                        fontSize = 28.sp,
+                        fontWeight = FontWeight.Black,
+                        modifier = Modifier
+                            .align(Alignment.BottomStart)
+                            .offset(x = (-4).dp, y = 2.dp)
+                            .rotate(225f)
+                    )
+                }
+
+                // Currently Played Top Card
+                topCard?.let { card ->
+                    UnoCardView(
+                        card = card,
+                        width = 76.dp,
+                        height = 112.dp,
+                        elevation = 8.dp,
+                        rotation = 2f
+                    )
+                }
+            }
+
+            // ========================================================
+            // 4. MID ROW: Draw Deck (Left) & Local Player Avatar (Right, with Countdown border)
+            // ========================================================
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp, vertical = 2.dp)
+            ) {
+                // Left: Draw Deck Card Bundle (Face-down, NO number of cards shown as requested!)
+                Row(
+                    modifier = Modifier.align(Alignment.CenterStart),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    UnoCardView(
+                        isBack = true,
+                        width = 68.dp,
+                        height = 100.dp,
+                        elevation = 8.dp,
+                        onClick = if (isLocalTurn) onDrawCard else null,
+                        modifier = Modifier.testTag("draw_pile_deck")
+                    )
+
+                    // Skip Turn button (appears next to draw deck if 1 card drawn and player chooses to pass)
+                    if (isLocalTurn && gameState.hasDrawnThisTurn) {
+                        Spacer(Modifier.width(12.dp))
+                        Button(
+                            onClick = onSkipTurn,
+                            colors = ButtonDefaults.buttonColors(containerColor = UnoRed),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier
+                                .height(46.dp)
+                                .shadow(6.dp, RoundedCornerShape(12.dp))
+                                .border(1.5.dp, Color.White, RoundedCornerShape(12.dp))
+                                .testTag("skip_turn_button")
+                        ) {
+                            Text("SKIP ⏭️", color = Color.White, fontWeight = FontWeight.Black, fontSize = 12.sp)
+                        }
+                    }
+                }
+
+                // Center Action: Call UNO / Catch UNO
+                Row(
+                    modifier = Modifier.align(Alignment.Center),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    if (canCallUno) {
+                        Button(
+                            onClick = onCallUno,
+                            colors = ButtonDefaults.buttonColors(containerColor = UnoYellow),
+                            shape = RoundedCornerShape(14.dp),
+                            modifier = Modifier
+                                .height(44.dp)
+                                .shadow(8.dp, RoundedCornerShape(14.dp))
+                                .border(2.dp, Color.White, RoundedCornerShape(14.dp))
+                                .testTag("call_uno_button")
+                        ) {
+                            Text("📢 CALL UNO!", color = Color.Black, fontWeight = FontWeight.Black, fontSize = 13.sp)
+                        }
+                    }
+
+                    if (canCatchOpponent) {
+                        Button(
+                            onClick = onCatchUno,
+                            colors = ButtonDefaults.buttonColors(containerColor = UnoRed),
+                            shape = RoundedCornerShape(14.dp),
+                            modifier = Modifier
+                                .height(44.dp)
+                                .shadow(8.dp, RoundedCornerShape(14.dp))
+                                .border(2.dp, UnoGold, RoundedCornerShape(14.dp))
+                                .testTag("catch_uno_button")
+                        ) {
+                            Text("🚨 CATCH!", color = Color.White, fontWeight = FontWeight.Black, fontSize = 13.sp)
+                        }
+                    }
+                }
+
+                // Right: Local Player Avatar with dynamic 20s countdown border (Green -> Yellow -> Red)
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.align(Alignment.CenterEnd)
+                ) {
+                    // Countdown badge when it's local player's turn
+                    if (isLocalTurn) {
+                        Box(
+                            modifier = Modifier
+                                .scale(countdownPulse)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(countdownColor)
+                                .padding(horizontal = 8.dp, vertical = 2.dp)
+                        ) {
+                            Text(
+                                text = "⏱️ ${secondsRemaining}s",
+                                color = Color.Black,
+                                fontWeight = FontWeight.Black,
+                                fontSize = 11.sp
+                            )
+                        }
+                        Spacer(Modifier.height(4.dp))
+                    }
+
+                    Box(
+                        modifier = Modifier
+                            .size(66.dp)
+                            .then(
+                                if (isLocalTurn) {
+                                    Modifier
+                                        .scale(countdownPulse)
+                                        .shadow(14.dp, RoundedCornerShape(18.dp), spotColor = countdownColor)
+                                } else Modifier
+                            )
+                            .clip(RoundedCornerShape(18.dp))
+                            .background(UnoRed)
+                            .border(
+                                width = if (isLocalTurn) 3.5.dp else 2.dp,
+                                color = if (isLocalTurn) countdownColor else Color.White.copy(alpha = 0.4f),
+                                shape = RoundedCornerShape(18.dp)
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(localPlayer.avatar, fontSize = 34.sp)
+                    }
+
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = localPlayer.name,
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 13.sp
+                    )
+                    if (localPlayer.unoCalled) {
+                        Text(
+                            text = "UNO!",
+                            color = UnoGold,
+                            fontWeight = FontWeight.Black,
+                            fontSize = 11.sp
+                        )
+                    }
+                }
+            }
+
+            // Emote toggle button floating above cards
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Emote bubble if active
+                localEmote?.let { em ->
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(Color.White)
+                            .padding(horizontal = 10.dp, vertical = 4.dp)
+                    ) {
+                        Text("${em.emoji} ${em.text}", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                    }
+                } ?: Spacer(Modifier.width(1.dp))
+
+                IconButton(
+                    onClick = { showEmotePicker = !showEmotePicker },
+                    modifier = Modifier
+                        .size(34.dp)
+                        .clip(CircleShape)
+                        .background(Color.Black.copy(alpha = 0.45f))
+                        .border(1.dp, Color.White.copy(alpha = 0.3f), CircleShape)
+                        .testTag("emote_button")
+                ) {
+                    Text("💬", fontSize = 15.sp)
+                }
+            }
+
+            // Emote picker drawer if open
+            AnimatedVisibility(visible = showEmotePicker) {
+                val emotes = listOf(
+                    Pair("👋", "Hello!"),
+                    Pair("🔥", "UNO coming!"),
+                    Pair("😱", "No way!"),
+                    Pair("😎", "Too easy!"),
+                    Pair("🤔", "Thinking..."),
+                    Pair("💥", "Boom!")
+                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 2.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(Color.Black.copy(alpha = 0.85f))
+                        .border(1.dp, UnoGold, RoundedCornerShape(14.dp))
+                        .padding(6.dp),
+                    horizontalArrangement = Arrangement.SpaceEvenly
+                ) {
+                    emotes.forEach { (emoji, label) ->
+                        Text(
+                            text = emoji,
+                            fontSize = 20.sp,
+                            modifier = Modifier
+                                .clip(CircleShape)
+                                .clickable {
+                                    onSendEmote(emoji, label)
+                                    showEmotePicker = false
+                                }
+                                .padding(4.dp)
+                        )
+                    }
+                }
+            }
+
+            // ========================================================
+            // 5. LOCAL PLAYER HAND CARDS (Bottom row)
+            // ========================================================
+            BoxWithConstraints(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(118.dp)
+                    .padding(horizontal = 10.dp, vertical = 4.dp),
+                contentAlignment = Alignment.BottomCenter
+            ) {
+                val hand = localPlayer.hand
+                val cardCount = hand.size
+
+                if (cardCount > 0) {
+                    val cardWidth = 66.dp
+                    val cardHeight = 104.dp
+                    val containerWidth = maxWidth - 16.dp
+
+                    // Dynamic step calculation to prevent any overflow/scroll
+                    val step = if (cardCount == 1) {
+                        0.dp
+                    } else {
+                        val maxStep = 56.dp
+                        val calculatedStep = (containerWidth - cardWidth) / (cardCount - 1)
+                        if (calculatedStep < maxStep) calculatedStep else maxStep
+                    }
+
+                    val totalSpan = cardWidth + (step * (cardCount - 1))
+                    val startOffset = (cardWidth / 2) - (totalSpan / 2)
+
+                    hand.forEachIndexed { index, card ->
+                        val isShaking = card.id == shakingCardId
+                        val xOffset = startOffset + (step * index)
+
+                        Box(
+                            modifier = Modifier
+                                .offset(x = xOffset)
+                                .align(Alignment.BottomCenter)
+                        ) {
+                            UnoCardView(
+                                card = card,
+                                width = cardWidth,
+                                height = cardHeight,
+                                isShaking = isShaking,
+                                elevation = 8.dp,
+                                onClick = {
+                                    if (card.color == CardColor.WILD || card.value.isWild) {
+                                        pendingWildCardId = card.id
+                                    } else {
+                                        onPlayCard(card.id, null)
+                                    }
+                                }
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // ========================================================
+        // FLYING CARD OVERLAY (Animated card flight on legal play)
+        // ========================================================
+        FlyingCardOverlay(
+            animation = flightAnimation,
+            onAnimationEnd = onClearFlightAnimation
+        )
+
+        // ========================================================
+        // MODALS
+        // ========================================================
+        // Color Picker Modal for Wilds
+        if (pendingWildCardId != null) {
+            ColorPickerModal(
+                onSelectColor = { chosen ->
+                    pendingWildCardId?.let { cid ->
+                        onPlayCard(cid, chosen)
+                    }
+                    pendingWildCardId = null
+                },
+                onDismiss = { pendingWildCardId = null }
+            )
+        }
+
+        // Pause Menu Modal
+        if (showPauseMenu) {
+            PauseMenuModal(
+                onSoundToggle = onToggleSound,
+                isMuted = isMuted,
+                onResume = { showPauseMenu = false },
+                onRestart = {
+                    showPauseMenu = false
+                    onRematch()
+                },
+                onQuit = {
+                    showPauseMenu = false
+                    onLeaveGame()
+                }
+            )
+        }
+
+        // Victory Modal
+        if (gameState.status == GameStatus.GAMEOVER) {
+            val winner = gameState.players.find { it.id == gameState.winnerId }
+            val isLocalWinner = winner?.id == localPlayer.id
+            VictoryModal(
+                winner = winner,
+                isWinnerLocal = isLocalWinner,
+                opponentCardsLeft = opponent.hand.size,
+                onRematch = onRematch,
+                onHome = onLeaveGame
+            )
+        }
+    }
+}
