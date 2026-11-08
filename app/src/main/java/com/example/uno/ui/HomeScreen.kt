@@ -29,8 +29,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.uno.R
+import com.example.uno.ads.AdMobBannerAd
 import com.example.uno.model.UserProfile
-import com.example.uno.ui.components.HomeBottomTestBannerAd
 import com.example.uno.ui.theme.*
 
 @Composable
@@ -75,7 +75,7 @@ fun HomeScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .verticalScroll(scrollState)
-                .padding(16.dp),
+                .padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 64.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             // TOP BAR: Profile Card & Settings
@@ -324,12 +324,18 @@ fun HomeScreen(
                 }
             }
 
-            Spacer(Modifier.height(20.dp))
+            Spacer(Modifier.height(16.dp))
+        }
 
-            // HOME SCREEN BOTTOM TEST BANNER AD (Requested: In home screen only test banner in bottom)
-            HomeBottomTestBannerAd(
-                modifier = Modifier.padding(bottom = 8.dp)
-            )
+        // DOCKED TO BOTTOM OF SCREEN: Google Mobile Ads Banner
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .padding(bottom = 2.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            AdMobBannerAd()
         }
     }
 }

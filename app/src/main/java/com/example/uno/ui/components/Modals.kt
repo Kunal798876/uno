@@ -692,7 +692,7 @@ fun VictoryModal(
 
                     Spacer(Modifier.height(18.dp))
 
-                    // Stats Tally Cards
+                    // Stats Tally Cards (NO XP - clean stars and cards tally)
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(10.dp)
@@ -701,15 +701,15 @@ fun VictoryModal(
                             modifier = Modifier
                                 .weight(1f)
                                 .clip(RoundedCornerShape(14.dp))
-                                .background(Color.White.copy(alpha = 0.06f))
-                                .border(1.dp, Color.White.copy(alpha = 0.15f), RoundedCornerShape(14.dp))
+                                .background(Color.White.copy(alpha = 0.08f))
+                                .border(1.dp, if (isWinnerLocal) UnoGold.copy(alpha = 0.4f) else UnoRed.copy(alpha = 0.4f), RoundedCornerShape(14.dp))
                                 .padding(10.dp),
                             contentAlignment = Alignment.Center
                         ) {
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                Text("REWARD", color = UnoGold, fontWeight = FontWeight.Bold, fontSize = 10.sp)
-                                Spacer(Modifier.height(2.dp))
-                                Text(if (isWinnerLocal) "+250 ⭐" else "+50 XP", color = Color.White, fontWeight = FontWeight.Black, fontSize = 16.sp)
+                                Text("DUEL RESULT", color = if (isWinnerLocal) UnoGold else UnoRed, fontWeight = FontWeight.Bold, fontSize = 10.sp)
+                                Spacer(Modifier.height(3.dp))
+                                Text(if (isWinnerLocal) "+500 ⭐" else "0 ⭐", color = Color.White, fontWeight = FontWeight.Black, fontSize = 16.sp)
                             }
                         }
 
@@ -717,14 +717,14 @@ fun VictoryModal(
                             modifier = Modifier
                                 .weight(1f)
                                 .clip(RoundedCornerShape(14.dp))
-                                .background(Color.White.copy(alpha = 0.06f))
-                                .border(1.dp, Color.White.copy(alpha = 0.15f), RoundedCornerShape(14.dp))
+                                .background(Color.White.copy(alpha = 0.08f))
+                                .border(1.dp, Color.White.copy(alpha = 0.2f), RoundedCornerShape(14.dp))
                                 .padding(10.dp),
                             contentAlignment = Alignment.Center
                         ) {
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                Text("REMAINING", color = UnoGold, fontWeight = FontWeight.Bold, fontSize = 10.sp)
-                                Spacer(Modifier.height(2.dp))
+                                Text("HAND REMAINING", color = UnoYellow, fontWeight = FontWeight.Bold, fontSize = 10.sp)
+                                Spacer(Modifier.height(3.dp))
                                 Text(if (isWinnerLocal) "0 Cards" else "$opponentCardsLeft Cards", color = Color.White, fontWeight = FontWeight.Black, fontSize = 16.sp)
                             }
                         }
@@ -732,35 +732,45 @@ fun VictoryModal(
 
                     Spacer(Modifier.height(24.dp))
 
-                    // Buttons
-                    Row(
+                    // Buttons: Prominent REMATCH / PLAY AGAIN & MAIN MENU
+                    Column(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        OutlinedButton(
-                            onClick = onHome,
-                            shape = RoundedCornerShape(14.dp),
-                            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
-                            border = androidx.compose.foundation.BorderStroke(1.5.dp, Color.White.copy(alpha = 0.35f)),
-                            modifier = Modifier.weight(1f).height(50.dp).testTag("return_home_button")
-                        ) {
-                            Text("MAIN MENU", fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                        }
-
                         Button(
                             onClick = onRematch,
                             colors = ButtonDefaults.buttonColors(
-                                containerColor = if (isWinnerLocal) UnoYellow else UnoRed
+                                containerColor = if (isWinnerLocal) UnoYellow else UnoGreen
                             ),
-                            shape = RoundedCornerShape(14.dp),
-                            modifier = Modifier.weight(1f).height(50.dp).testTag("rematch_button")
+                            shape = RoundedCornerShape(16.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(52.dp)
+                                .testTag("rematch_button")
                         ) {
-                            Text(
-                                text = "⚔️ REMATCH",
-                                color = if (isWinnerLocal) Color.Black else Color.White,
-                                fontWeight = FontWeight.Black,
-                                fontSize = 13.sp
-                            )
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("⚔️", fontSize = 18.sp)
+                                Spacer(Modifier.width(8.dp))
+                                Text(
+                                    text = "PLAY AGAIN / REMATCH",
+                                    color = Color.Black,
+                                    fontWeight = FontWeight.Black,
+                                    fontSize = 14.sp
+                                )
+                            }
+                        }
+
+                        OutlinedButton(
+                            onClick = onHome,
+                            shape = RoundedCornerShape(16.dp),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
+                            border = androidx.compose.foundation.BorderStroke(1.5.dp, Color.White.copy(alpha = 0.35f)),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(48.dp)
+                                .testTag("return_home_button")
+                        ) {
+                            Text("🏠 MAIN MENU", fontWeight = FontWeight.Bold, fontSize = 13.sp)
                         }
                     }
                 }

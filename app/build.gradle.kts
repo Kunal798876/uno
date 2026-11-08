@@ -10,13 +10,22 @@ android {
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.aistudio.unoroyale.kpdzqm"
+        applicationId = "com.weesart.unoroyale"
         minSdk = 24
         targetSdk = 36
         versionCode = 1
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    signingConfigs {
+        create("debugConfig") {
+            storeFile = file("${rootDir}/debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
     }
 
     buildTypes {
@@ -29,6 +38,7 @@ android {
         }
         debug {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("debugConfig")
         }
     }
     compileOptions {
@@ -57,6 +67,7 @@ dependencies {
     implementation(libs.androidx.navigation.compose)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.serialization.json)
+    implementation(libs.play.services.ads)
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)

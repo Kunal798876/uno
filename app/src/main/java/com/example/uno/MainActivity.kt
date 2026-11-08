@@ -1,5 +1,6 @@
 package com.example.uno
 
+import android.app.Activity
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -11,6 +12,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import com.example.uno.ads.AdManager
+import com.example.uno.network.NetworkMonitor
+import com.example.uno.network.NoInternetDialog
 import com.example.uno.ui.*
 import com.example.uno.ui.components.*
 import com.example.uno.ui.theme.UnoRoyaleTheme
@@ -19,10 +23,17 @@ import com.example.uno.viewmodel.GameViewModel
 class MainActivity : ComponentActivity() {
 
     private val viewModel: GameViewModel by viewModels()
+    private lateinit var networkMonitor: NetworkMonitor
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+
+        // Initialize Google Mobile Ads SDK with App ID
+        AdManager.initialize(this)
+
+        // Initialize active network monitor
+        networkMonitor = NetworkMonitor(this)
 
         setContent {
             UnoRoyaleTheme {
@@ -30,21 +41,45 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    UnoRoyaleApp(viewModel = viewModel)
+                    UnoRoyaleApp(activity = this, viewModel = viewModel, networkMonitor = networkMonitor)
                 }
             }
         }
     }
+
+    override fun onPause() {
+        super.onPause()
+        // Immediately pause game turns, timer and music when screen turns off or user leaves app
+        viewModel.onAppBackgrounded()
+    }
+
+    override fun onStop() {
+        super.onStop()
+        viewModel.onAppBackgrounded()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Resume activity state and check network connection
+        viewModel.onAppForegrounded()
+        networkMonitor.checkConnection()
+    }
 }
 
 @Composable
-fun UnoRoyaleApp(viewModel: GameViewModel) {
+fun UnoRoyaleApp(
+    activity: Activity,
+    viewModel: GameViewModel,
+    networkMonitor: NetworkMonitor
+) {
     val currentScreen by viewModel.currentScreen.collectAsState()
     val gameState by viewModel.gameState.collectAsState()
     val userProfile by viewModel.userProfile.collectAsState()
     val rules by viewModel.rules.collectAsState()
     val localPlayerId by viewModel.localPlayerId.collectAsState()
     val shakingCardId by viewModel.shakingCardId.collectAsState()
+    val animatingCardId by viewModel.animatingCardId.collectAsState()
+    val isGamePaused by viewModel.isGamePaused.collectAsState()
     val activeEmotes by viewModel.activeEmotes.collectAsState()
     val isMuted by viewModel.isMuted.collectAsState()
     val isMusicOn by viewModel.isMusicOn.collectAsState()
@@ -53,6 +88,7 @@ fun UnoRoyaleApp(viewModel: GameViewModel) {
     val showFirstTimeOnboarding by viewModel.showFirstTimeOnboarding.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
     val loadingMessage by viewModel.loadingMessage.collectAsState()
+    val isNetworkConnected by networkMonitor.isConnected.collectAsState()
 
     var showRulesModal by remember { mutableStateOf(false) }
     var showHowToPlayModal by remember { mutableStateOf(false) }
@@ -66,11 +102,13 @@ fun UnoRoyaleApp(viewModel: GameViewModel) {
                         gameState = state,
                         localPlayerId = localPlayerId,
                         shakingCardId = shakingCardId,
+                        animatingCardId = animatingCardId,
+                        isGamePaused = isGamePaused,
                         flightAnimation = flightAnimation,
                         activeEmotes = activeEmotes,
                         isMuted = isMuted,
                         isMusicOn = isMusicOn,
-                        onPlayCard = { cid, color -> viewModel.onPlayCard(cid, color) },
+                        onPlayCard = { cid, color, xOffset -> viewModel.onPlayCard(cid, color, xOffset) },
                         onDrawCard = { viewModel.onDrawCard() },
                         onSkipTurn = { viewModel.onSkipTurn() },
                         onClearFlightAnimation = { viewModel.clearFlightAnimation() },
@@ -79,6 +117,8 @@ fun UnoRoyaleApp(viewModel: GameViewModel) {
                         onSendEmote = { emoji, text -> viewModel.sendEmote(emoji, text) },
                         onToggleSound = { viewModel.toggleSound() },
                         onToggleMusic = { viewModel.toggleMusic() },
+                        onResumeFromPause = { viewModel.resumeFromPause() },
+                        onFriendJoined = { name, avatar -> viewModel.onFriendJoined(name, avatar) },
                         onRematch = { viewModel.rematch() },
                         onLeaveGame = { viewModel.leaveGame() }
                     )
@@ -90,7 +130,8 @@ fun UnoRoyaleApp(viewModel: GameViewModel) {
                 LobbyScreen(
                     profile = userProfile,
                     rules = rules,
-                    onStartGame = { code, isHost -> viewModel.startCustomRoomMatch(code, isHost) },
+                    onCreateRoom = { code -> viewModel.createCustomRoom(code) },
+                    onJoinRoom = { code, name, avatar -> viewModel.joinCustomRoom(code, name, avatar) },
                     onBack = { viewModel.navigateTo("home") }
                 )
             }
@@ -116,7 +157,7 @@ fun UnoRoyaleApp(viewModel: GameViewModel) {
                     onOpenLobby = { viewModel.navigateTo("lobby") },
                     onOpenRules = { showRulesModal = true },
                     onOpenHowToPlay = { showHowToPlayModal = true },
-                    onOpenGift = { viewModel.onOpenGiftDirectAd() },
+                    onOpenGift = { viewModel.onOpenGiftClicked(activity) },
                     onOpenProfile = { showProfileModal = true },
                     onOpenSettings = { viewModel.navigateTo("settings") }
                 )
@@ -124,7 +165,16 @@ fun UnoRoyaleApp(viewModel: GameViewModel) {
         }
     }
 
-    // Direct Fullscreen Test Ad (on Gift click, no confirmation, no waiting)
+    // Interactive No Internet Connection Modal (prompts for Wi-Fi or Mobile Data)
+    if (!isNetworkConnected) {
+        NoInternetDialog(
+            onRetry = {
+                networkMonitor.checkConnection()
+            }
+        )
+    }
+
+    // Fullscreen Rewarded Video Ad Overlay (on Gift click fallback)
     if (showTestAd) {
         TestAdFullscreenOverlay(
             onRewardEarned = { viewModel.onAdRewardClaimed() },

@@ -128,6 +128,7 @@ data class GameState(
     val roomCode: String? = null,
     val isBotTakeover: Boolean = false,
     val roomClosed: Boolean = false,
+    val isRoomWaiting: Boolean = false,
     val cardsDrawnCount: Int = 0
 )
 

@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">UNO Royale: 2-Player Duels</string>
+    <string name="app_name">Uno Royale : 2 player</string>
     <string name="quick_play">Quick Play vs AI</string>
     <string name="play_with_friends">Pass &amp; Play / 2-Player</string>
     <string name="house_rules">Custom House Rules</string>

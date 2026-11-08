@@ -557,6 +557,28 @@ object UnoEngine {
     }
 
     /**
+     * Check if a player can legally call UNO:
+     * - Hand size is <= 2 cards
+     * - Has not yet called UNO
+     * - Must have at least ONE valid playable card in hand against the current discard top card
+     *   (If both cards are invalid, CALL UNO is not visible / not allowed)
+     */
+    fun canPlayerCallUno(
+        state: GameState,
+        playerId: String
+    ): Boolean {
+        val player = state.players.find { it.id == playerId } ?: return false
+        if (player.unoCalled) return false
+        if (player.hand.size > 2 || player.hand.isEmpty()) return false
+
+        val topCard = state.discardPile.lastOrNull() ?: return false
+        val hasPlayableCard = player.hand.any { card ->
+            isCardPlayable(card, topCard, state.activeColor, state.pendingDrawCount, state.rules)
+        }
+        return hasPlayableCard
+    }
+
+    /**
      * Player calls UNO for themselves
      */
     fun executeCallUno(
@@ -567,7 +589,7 @@ object UnoEngine {
         if (playerIndex == -1) return Pair(state, false)
 
         val player = state.players[playerIndex]
-        if (player.hand.size <= 2) {
+        if (canPlayerCallUno(state, playerId)) {
             val playersList = state.players.toMutableList()
             playersList[playerIndex] = player.copy(unoCalled = true)
 

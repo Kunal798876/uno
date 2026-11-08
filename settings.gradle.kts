@@ -19,5 +19,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "UNO Royale"
+rootProject.name = "Uno Royale 2 player"
 include(":app")

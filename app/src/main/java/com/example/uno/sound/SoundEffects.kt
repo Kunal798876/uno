@@ -251,6 +251,28 @@ class SoundEffects(context: Context) {
         } catch (_: Exception) {}
     }
 
+    fun pauseBgm() {
+        try {
+            bgmTrack?.let { track ->
+                if (track.playState == AudioTrack.PLAYSTATE_PLAYING) {
+                    track.pause()
+                }
+            }
+        } catch (_: Exception) {}
+    }
+
+    fun resumeBgm() {
+        if (!isMuted && isMusicOn) {
+            try {
+                bgmTrack?.let { track ->
+                    if (track.playState != AudioTrack.PLAYSTATE_PLAYING) {
+                        track.play()
+                    }
+                } ?: startBgm()
+            } catch (_: Exception) {}
+        }
+    }
+
     fun playCardPlay() {
         if (!isMuted) {
             toneGenerator?.startTone(ToneGenerator.TONE_PROP_BEEP, 45)
