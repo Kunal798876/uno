@@ -790,8 +790,8 @@ fun GameArenaScreen(
                             textAlign = TextAlign.Center
                         )
 
-                        // 5-Digit Code display
-                        val code = gameState.roomCode ?: "12345"
+                        // 4-Digit Code display
+                        val code = gameState.roomCode ?: "1234"
                         Row(
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                             verticalAlignment = Alignment.CenterVertically

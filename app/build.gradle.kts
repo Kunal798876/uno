@@ -68,6 +68,7 @@ dependencies {
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.play.services.ads)
+    implementation(libs.socket.io.client)
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)

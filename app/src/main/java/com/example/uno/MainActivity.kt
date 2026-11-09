@@ -89,6 +89,10 @@ fun UnoRoyaleApp(
     val isLoading by viewModel.isLoading.collectAsState()
     val loadingMessage by viewModel.loadingMessage.collectAsState()
     val isNetworkConnected by networkMonitor.isConnected.collectAsState()
+    val currentRoom by viewModel.currentRoom.collectAsState()
+    val countdownSeconds by viewModel.countdownSeconds.collectAsState()
+    val socketConnectionStatus by viewModel.socketConnectionStatus.collectAsState()
+    val backendUrl by viewModel.backendUrl.collectAsState()
 
     var showRulesModal by remember { mutableStateOf(false) }
     var showHowToPlayModal by remember { mutableStateOf(false) }
@@ -130,8 +134,28 @@ fun UnoRoyaleApp(
                 LobbyScreen(
                     profile = userProfile,
                     rules = rules,
-                    onCreateRoom = { code -> viewModel.createCustomRoom(code) },
-                    onJoinRoom = { code, name, avatar -> viewModel.joinCustomRoom(code, name, avatar) },
+                    currentRoom = currentRoom,
+                    connectionStatus = socketConnectionStatus,
+                    localGuestId = localPlayerId,
+                    countdownSeconds = countdownSeconds,
+                    onCreateRoom = { onResult ->
+                        viewModel.createCustomRoom(onResult)
+                    },
+                    onJoinRoom = { code, name, avatar, onJoined ->
+                        viewModel.joinCustomRoom(code, name, avatar, onJoined)
+                    },
+                    onSetReady = { isReady ->
+                        viewModel.setReady(isReady)
+                    },
+                    onStartGame = { callback ->
+                        viewModel.startMultiplayerGame(callback)
+                    },
+                    onLeaveRoom = {
+                        viewModel.multiplayerRepo.leaveRoom()
+                    },
+                    onRetryConnection = {
+                        viewModel.multiplayerRepo.connect()
+                    },
                     onBack = { viewModel.navigateTo("home") }
                 )
             }
