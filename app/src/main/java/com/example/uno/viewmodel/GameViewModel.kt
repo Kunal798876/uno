@@ -70,9 +70,6 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     private val _isMusicOn = MutableStateFlow(sounds.isMusicOn)
     val isMusicOn: StateFlow<Boolean> = _isMusicOn.asStateFlow()
 
-    private val _showTestAd = MutableStateFlow(false)
-    val showTestAd: StateFlow<Boolean> = _showTestAd.asStateFlow()
-
     private val _flightAnimation = MutableStateFlow<CardFlightAnimation?>(null)
     val flightAnimation: StateFlow<CardFlightAnimation?> = _flightAnimation.asStateFlow()
 
@@ -157,26 +154,14 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
 
     fun onOpenGiftClicked(activity: Activity) {
         // Start.io Rewarded Video Ad on gift click
-        AdManager.showRewardedAd(
+        // Simply triggers video advertisement experience. User returns to Home screen after ad closes.
+        // No rewards, stars, coins, points, or balance modifications are granted.
+        AdManager.showRewardedVideo(
             activity = activity,
-            onRewardEarned = {
-                onAdRewardClaimed()
-            },
-            onFallbackRequired = {
-                // If ad not loaded or offline, trigger interactive fallback overlay
-                _showTestAd.value = true
+            onAdClosed = {
+                // User returned to Home screen - no rewards granted
             }
         )
-    }
-
-    fun onAdRewardClaimed() {
-        _showTestAd.value = false
-        sounds.playWinFanfare()
-        updateProfile(_userProfile.value.copy(gamesWon = _userProfile.value.gamesWon + 1))
-    }
-
-    fun dismissTestAd() {
-        _showTestAd.value = false
     }
 
     fun onAppBackgrounded() {
@@ -263,6 +248,9 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
 
     fun onPlayCard(cardId: String, chosenColor: CardColor? = null, sourceXOffset: Float = 0f) {
         val state = _gameState.value ?: return
+        if (state.status != GameStatus.PLAYING) return
+        if (_animatingCardId.value != null || _flightAnimation.value != null) return
+
         val currentP = state.players[state.currentTurnIndex]
         val card = currentP.hand.find { it.id == cardId } ?: return
 

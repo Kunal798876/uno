@@ -5,6 +5,7 @@ import android.os.Build
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
@@ -22,10 +23,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.uno.R
 import com.example.uno.model.AiDifficulty
 import com.example.uno.model.GameRules
 import com.example.uno.ui.theme.*
@@ -40,14 +44,12 @@ fun SettingsScreen(
     onToggleMusic: () -> Unit,
     onToggleNotifications: (Boolean) -> Unit = {},
     onUpdateRules: (GameRules) -> Unit,
-    onResetStats: () -> Unit,
+    onResetStats: () -> Unit = {},
     onBack: () -> Unit
 ) {
     BackHandler {
         onBack()
     }
-
-    var showResetConfirm by remember { mutableStateOf(false) }
 
     // Launcher for runtime notification permission on Android 13+
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
@@ -59,16 +61,21 @@ fun SettingsScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(
-                Brush.radialGradient(
-                    colors = listOf(UnoBgRed, UnoBgDark, Color(0xFF4A0000)),
-                    radius = 1200f
-                )
-            )
-            .statusBarsPadding()
-            .navigationBarsPadding()
             .testTag("settings_screen")
     ) {
+        Image(
+            painter = painterResource(id = R.drawable.bg_app_red),
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier.fillMaxSize()
+        )
+
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .statusBarsPadding()
+                .navigationBarsPadding()
+        ) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -146,19 +153,6 @@ fun SettingsScreen(
                             )
                         }
 
-                        HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp), color = Color.White.copy(alpha = 0.1f))
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column {
-                                Text("Start.io Ads & Rewards", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                                Text("App ID: 143270238 • Authorized app-ads.txt", color = Color.White.copy(alpha = 0.6f), fontSize = 11.sp)
-                            }
-                            Icon(Icons.Default.Verified, "Verified Network", tint = UnoGold)
-                        }
                     }
                 }
 
@@ -268,30 +262,6 @@ fun SettingsScreen(
                     }
                 }
 
-                Spacer(Modifier.height(20.dp))
-
-                // DATA MANAGEMENT
-                Text(
-                    text = "DATA MANAGEMENT",
-                    color = UnoGold,
-                    fontWeight = FontWeight.Black,
-                    fontSize = 13.sp,
-                    modifier = Modifier.align(Alignment.Start)
-                )
-                Spacer(Modifier.height(8.dp))
-
-                OutlinedButton(
-                    onClick = { showResetConfirm = true },
-                    shape = RoundedCornerShape(14.dp),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = UnoRed),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(48.dp)
-                ) {
-                    Icon(Icons.Default.DeleteOutline, "Reset", tint = UnoRed)
-                    Spacer(Modifier.width(8.dp))
-                    Text("RESET MATCH WIN/PLAYED STATS", color = UnoRed, fontWeight = FontWeight.Black)
-                }
             }
 
             // Version info footer
@@ -311,28 +281,7 @@ fun SettingsScreen(
                 )
             }
         }
-
-        if (showResetConfirm) {
-            AlertDialog(
-                onDismissRequest = { showResetConfirm = false },
-                title = { Text("Reset Stats?", fontWeight = FontWeight.Bold) },
-                text = { Text("Are you sure you want to reset your won and played games back to 0?") },
-                confirmButton = {
-                    TextButton(
-                        onClick = {
-                            onResetStats()
-                            showResetConfirm = false
-                        }
-                    ) {
-                        Text("Reset", color = UnoRed, fontWeight = FontWeight.Bold)
-                    }
-                },
-                dismissButton = {
-                    TextButton(onClick = { showResetConfirm = false }) {
-                        Text("Cancel")
-                    }
-                }
-            )
-        }
     }
 }
+}
+

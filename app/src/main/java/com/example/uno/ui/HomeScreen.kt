@@ -60,27 +60,24 @@ fun HomeScreen(
         label = "pulse_scale"
     )
 
-    val winRate = if (profile.gamesPlayed > 0) {
-        ((profile.gamesWon.toFloat() / profile.gamesPlayed.toFloat()) * 100).toInt()
-    } else 0
-
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(
-                Brush.radialGradient(
-                    colors = listOf(
-                        Color(0xFF2E0404),
-                        UnoBgDark,
-                        Color(0xFF0D0202)
-                    ),
-                    radius = 1400f
-                )
-            )
-            .statusBarsPadding()
-            .navigationBarsPadding()
             .testTag("home_screen")
     ) {
+        Image(
+            painter = painterResource(id = R.drawable.bg_app_red),
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier.fillMaxSize()
+        )
+
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .statusBarsPadding()
+                .navigationBarsPadding()
+        ) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -120,27 +117,19 @@ fun HomeScreen(
                         Text(profile.avatar, fontSize = 20.sp)
                     }
                     Spacer(Modifier.width(10.dp))
-                    Column {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                text = profile.name,
-                                color = Color.White,
-                                fontWeight = FontWeight.Black,
-                                fontSize = 14.sp
-                            )
-                            Spacer(Modifier.width(4.dp))
-                            Icon(
-                                Icons.Default.Edit,
-                                contentDescription = "Edit Profile",
-                                tint = UnoYellow,
-                                modifier = Modifier.size(12.dp)
-                            )
-                        }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
-                            text = "👑 ${profile.gamesWon} Wins • Level ${1 + (profile.gamesWon / 5)}",
-                            color = UnoGold,
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold
+                            text = profile.name,
+                            color = Color.White,
+                            fontWeight = FontWeight.Black,
+                            fontSize = 15.sp
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Icon(
+                            Icons.Default.Edit,
+                            contentDescription = "Edit Profile",
+                            tint = UnoYellow,
+                            modifier = Modifier.size(13.dp)
                         )
                     }
                 }
@@ -260,86 +249,6 @@ fun HomeScreen(
                             color = Color.White.copy(alpha = 0.95f),
                             fontWeight = FontWeight.Bold,
                             fontSize = 12.sp
-                        )
-                    }
-                }
-            }
-
-            Spacer(Modifier.height(18.dp))
-
-            // =========================================================================
-            // STATS BAR: Matches, Wins, Win Rate
-            // =========================================================================
-            Card(
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = Color.Black.copy(alpha = 0.45f)),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .border(1.dp, Color.White.copy(alpha = 0.15f), RoundedCornerShape(16.dp))
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 12.dp, horizontal = 8.dp),
-                    horizontalArrangement = Arrangement.SpaceEvenly,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(
-                            text = "${profile.gamesPlayed}",
-                            color = Color.White,
-                            fontWeight = FontWeight.Black,
-                            fontSize = 17.sp
-                        )
-                        Text(
-                            text = "MATCHES",
-                            color = Color.White.copy(alpha = 0.55f),
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-
-                    Box(
-                        modifier = Modifier
-                            .width(1.dp)
-                            .height(28.dp)
-                            .background(Color.White.copy(alpha = 0.15f))
-                    )
-
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(
-                            text = "${profile.gamesWon}",
-                            color = UnoGold,
-                            fontWeight = FontWeight.Black,
-                            fontSize = 17.sp
-                        )
-                        Text(
-                            text = "VICTORIES",
-                            color = UnoGold.copy(alpha = 0.7f),
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-
-                    Box(
-                        modifier = Modifier
-                            .width(1.dp)
-                            .height(28.dp)
-                            .background(Color.White.copy(alpha = 0.15f))
-                    )
-
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(
-                            text = "$winRate%",
-                            color = UnoGreen,
-                            fontWeight = FontWeight.Black,
-                            fontSize = 17.sp
-                        )
-                        Text(
-                            text = "WIN RATE",
-                            color = UnoGreen.copy(alpha = 0.7f),
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold
                         )
                     }
                 }
@@ -555,11 +464,13 @@ fun HomeScreen(
 
         // =========================================================================
         // BOTTOM DOCKED: Start.io Banner Ad Container
+        // Pinned to the very bottom screen edge with navigation bar insets
         // =========================================================================
         Box(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
+                .navigationBarsPadding()
                 .padding(bottom = 2.dp),
             contentAlignment = Alignment.Center
         ) {
@@ -567,3 +478,5 @@ fun HomeScreen(
         }
     }
 }
+}
+

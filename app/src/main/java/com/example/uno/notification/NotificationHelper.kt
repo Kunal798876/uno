@@ -66,8 +66,8 @@ class NotificationHelper(private val context: Context) {
 
         val builder = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.mipmap.ic_launcher)
-            .setContentTitle("🎁 Daily Surprise Gift Ready!")
-            .setContentText("Your daily UNO Royale reward chest is ready to unlock. Claim your stars!")
+            .setContentTitle("🎁 UNO Royale")
+            .setContentText("Jump into UNO Royale and challenge your rival in 2-player battle!")
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .setContentIntent(pendingIntent)
             .setAutoCancel(true)

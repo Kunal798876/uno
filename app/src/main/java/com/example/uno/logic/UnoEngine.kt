@@ -309,6 +309,7 @@ object UnoEngine {
         )
 
         // Action mechanics
+        // Action mechanics: Only SKIP and REVERSE grant an extra card turn. DRAW2 and WILD4 pass turn to opponent!
         if (card.value == CardValue.DRAW2) {
             val (drawn, nDeck, nDisc) = drawFromDeck(currentDeck, currentDiscardList, 2)
             currentDeck = nDeck
@@ -319,8 +320,8 @@ object UnoEngine {
                 hand = opp.hand + drawn,
                 unoCalled = false
             )
-            nextTurnIndex = playerIndex // In 2-player UNO, +2 skips opponent, giving current player another turn!
-            actionText += "! 2 cards added to ${opp.name} (+ extra turn)"
+            nextTurnIndex = opponentIndex
+            actionText += "! 2 cards added to ${opp.name}"
         } else if (card.value == CardValue.WILD4) {
             val (drawn, nDeck, nDisc) = drawFromDeck(currentDeck, currentDiscardList, 4)
             currentDeck = nDeck
@@ -331,8 +332,8 @@ object UnoEngine {
                 hand = opp.hand + drawn,
                 unoCalled = false
             )
-            nextTurnIndex = playerIndex
-            actionText += "! 4 cards added to ${opp.name} & chose ${nextColor.displayName} (+ extra turn)"
+            nextTurnIndex = opponentIndex
+            actionText += "! 4 cards added to ${opp.name} & chose ${nextColor.displayName}"
         } else if (card.value == CardValue.SKIP) {
             nextTurnIndex = playerIndex
             actionText += " (Skipped! ${player.name} goes again)"

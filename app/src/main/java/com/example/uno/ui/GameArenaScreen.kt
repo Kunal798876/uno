@@ -4,6 +4,7 @@ import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -24,14 +25,17 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.uno.R
 import com.example.uno.logic.UnoEngine
 import com.example.uno.model.*
 import com.example.uno.ui.components.*
@@ -85,13 +89,13 @@ fun GameArenaScreen(
     val localEmote = activeEmotes[localPlayer.id]
     val opponentEmote = activeEmotes[opponent.id]
 
-    // Turn ring rotation animation (indicates play direction as seen in 3.jpg)
+    // Turn ring rotation animation: rotates strictly clockwise as requested
     val infiniteTransition = rememberInfiniteTransition(label = "turn_direction_spin")
     val directionRotation by infiniteTransition.animateFloat(
         initialValue = 0f,
-        targetValue = if (gameState.direction > 0) 360f else -360f,
+        targetValue = 360f,
         animationSpec = infiniteRepeatable(
-            animation = tween(12000, easing = LinearEasing),
+            animation = tween(10000, easing = LinearEasing),
             repeatMode = RepeatMode.Restart
         ),
         label = "turn_spin"
@@ -124,25 +128,19 @@ fun GameArenaScreen(
         CardColor.WILD -> UnoWildBlack
     }
 
-    val currentCardColor = topCard?.let { card ->
-        if (card.color == CardColor.WILD || card.value.isWild) {
-            gameState.activeColor
-        } else {
-            card.color
-        }
-    } ?: gameState.activeColor
-
-    val targetCircleColor = when (currentCardColor) {
-        CardColor.RED -> Color(0xFFFF1B04)
-        CardColor.BLUE -> Color(0xFF0072BC)
-        CardColor.GREEN -> Color(0xFF009E38)
-        CardColor.YELLOW -> Color(0xFFFFD600)
-        CardColor.WILD -> Color(0xFFFF9800)
+    // Dynamic circle color that changes with every card played:
+    // Red card -> Red circle, Green card -> Green circle, Blue card -> Blue circle, Yellow card -> Yellow circle
+    val targetCircleColor = when (gameState.activeColor) {
+        CardColor.RED -> Color(0xFFFF1744) // Vibrant Red
+        CardColor.BLUE -> Color(0xFF00B0FF) // Vibrant Electric Blue
+        CardColor.GREEN -> Color(0xFF00E676) // Vibrant Green
+        CardColor.YELLOW -> Color(0xFFFFEA00) // Vibrant Yellow
+        CardColor.WILD -> Color(0xFFFF9100)  // Vibrant Orange
     }
 
     val animatedCircleColor by animateColorAsState(
         targetValue = targetCircleColor,
-        animationSpec = tween(450, easing = FastOutSlowInEasing),
+        animationSpec = tween(350, easing = FastOutSlowInEasing),
         label = "circle_color_anim"
     )
 
@@ -152,16 +150,21 @@ fun GameArenaScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(
-                Brush.radialGradient(
-                    colors = listOf(Color(0xFF009EB3), Color(0xFF00758A), Color(0xFF004D5C)),
-                    radius = 1400f
-                )
-            )
-            .statusBarsPadding()
-            .navigationBarsPadding()
             .testTag("game_arena_screen")
     ) {
+        Image(
+            painter = painterResource(id = R.drawable.bg_app_red),
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier.fillMaxSize()
+        )
+
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .statusBarsPadding()
+                .navigationBarsPadding()
+        ) {
         Column(
             modifier = Modifier.fillMaxSize()
         ) {
@@ -424,31 +427,30 @@ fun GameArenaScreen(
                 ) {
                     Box(
                         modifier = Modifier
-                            .size(170.dp)
-                            .background(Color(0xFF071820).copy(alpha = 0.65f), CircleShape)
-                            .border(4.dp, animatedCircleColor, CircleShape)
-                            .shadow(10.dp, CircleShape, spotColor = animatedCircleColor)
+                            .size(168.dp)
+                            .border(5.dp, animatedCircleColor, CircleShape)
+                            .shadow(12.dp, CircleShape, spotColor = animatedCircleColor)
                     )
 
                     Text(
                         text = "➔",
-                        color = animatedCircleColor,
-                        fontSize = 28.sp,
+                        color = Color(0xFFFF9100),
+                        fontSize = 30.sp,
                         fontWeight = FontWeight.Black,
                         modifier = Modifier
                             .align(Alignment.TopEnd)
-                            .offset(x = 4.dp, y = (-2).dp)
-                            .rotate(45f)
+                            .offset(x = 6.dp, y = (-2).dp)
+                            .rotate(65f)
                     )
                     Text(
                         text = "➔",
-                        color = animatedCircleColor,
-                        fontSize = 28.sp,
+                        color = Color(0xFFFF9100),
+                        fontSize = 30.sp,
                         fontWeight = FontWeight.Black,
                         modifier = Modifier
                             .align(Alignment.BottomStart)
-                            .offset(x = (-4).dp, y = 2.dp)
-                            .rotate(225f)
+                            .offset(x = (-6).dp, y = 2.dp)
+                            .rotate(245f)
                     )
                 }
 
@@ -686,14 +688,16 @@ fun GameArenaScreen(
                                 isShaking = isShaking,
                                 elevation = 8.dp,
                                 modifier = Modifier.alpha(if (isAnimatingOut) 0f else 1f),
-                                onClick = {
-                                    if (card.color == CardColor.WILD || card.value.isWild) {
-                                        pendingWildCardId = card.id
-                                        pendingWildCardXOffset = xOffset.value
-                                    } else {
-                                        onPlayCard(card.id, null, xOffset.value)
+                                onClick = if (isLocalTurn && flightAnimation == null && animatingCardId == null) {
+                                    {
+                                        if (card.color == CardColor.WILD || card.value.isWild) {
+                                            pendingWildCardId = card.id
+                                            pendingWildCardXOffset = xOffset.value
+                                        } else {
+                                            onPlayCard(card.id, null, xOffset.value)
+                                        }
                                     }
-                                }
+                                } else null
                             )
                         }
                     }
@@ -924,3 +928,5 @@ fun GameArenaScreen(
         }
     }
 }
+}
+

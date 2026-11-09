@@ -80,7 +80,6 @@ fun UnoRoyaleApp(
     val activeEmotes by viewModel.activeEmotes.collectAsState()
     val isMuted by viewModel.isMuted.collectAsState()
     val isMusicOn by viewModel.isMusicOn.collectAsState()
-    val showTestAd by viewModel.showTestAd.collectAsState()
     val flightAnimation by viewModel.flightAnimation.collectAsState()
     val showFirstTimeOnboarding by viewModel.showFirstTimeOnboarding.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
@@ -153,13 +152,6 @@ fun UnoRoyaleApp(
         }
     }
 
-    // Rewarded Video Ad fallback interactive overlay (when offline or loading)
-    if (showTestAd) {
-        TestAdFullscreenOverlay(
-            onRewardEarned = { viewModel.onAdRewardClaimed() },
-            onDismiss = { viewModel.dismissTestAd() }
-        )
-    }
 
     // First-Time Device Onboarding
     if (showFirstTimeOnboarding) {

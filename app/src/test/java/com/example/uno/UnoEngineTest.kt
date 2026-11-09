@@ -143,4 +143,49 @@ class UnoEngineTest {
         assertEquals(state.players[0].hand.size, decoded.players[0].hand.size)
         assertEquals(state.players[1].hand.size, decoded.players[1].hand.size)
     }
+
+    @Test
+    fun onlySkipAndReverseGrantExtraCardTurn() {
+        val p1 = Player("p1", "Alice", hand = listOf(
+            Card("s1", CardColor.RED, CardValue.SKIP, 20),
+            Card("r1", CardColor.RED, CardValue.REVERSE, 20),
+            Card("d1", CardColor.RED, CardValue.DRAW2, 20),
+            Card("n1", CardColor.RED, CardValue.NUM_5, 5)
+        ))
+        val p2 = Player("p2", "Bob", hand = listOf(
+            Card("b1", CardColor.BLUE, CardValue.NUM_1, 1)
+        ))
+        val state = GameState(
+            id = "test",
+            deck = listOf(
+                Card("k1", CardColor.RED, CardValue.NUM_2, 2),
+                Card("k2", CardColor.RED, CardValue.NUM_3, 3)
+            ),
+            discardPile = listOf(Card("top", CardColor.RED, CardValue.NUM_9, 9)),
+            activeColor = CardColor.RED,
+            players = listOf(p1, p2),
+            currentTurnIndex = 0,
+            status = GameStatus.PLAYING
+        )
+
+        // 1. Skip card: Player 1 keeps turn (plays 2nd card)
+        val (stateAfterSkip, successSkip) = UnoEngine.executePlayCard(state, "p1", "s1")
+        assertTrue(successSkip)
+        assertEquals(0, stateAfterSkip.currentTurnIndex)
+
+        // 2. Reverse card: Player 1 keeps turn (plays 2nd card in 2-player)
+        val (stateAfterReverse, successReverse) = UnoEngine.executePlayCard(state, "p1", "r1")
+        assertTrue(successReverse)
+        assertEquals(0, stateAfterReverse.currentTurnIndex)
+
+        // 3. Draw 2 card: Turn passes to opponent (player only plays 1 card)
+        val (stateAfterDraw2, successDraw2) = UnoEngine.executePlayCard(state, "p1", "d1")
+        assertTrue(successDraw2)
+        assertEquals(1, stateAfterDraw2.currentTurnIndex)
+
+        // 4. Number card: Turn passes to opponent (player only plays 1 card)
+        val (stateAfterNum, successNum) = UnoEngine.executePlayCard(state, "p1", "n1")
+        assertTrue(successNum)
+        assertEquals(1, stateAfterNum.currentTurnIndex)
+    }
 }
