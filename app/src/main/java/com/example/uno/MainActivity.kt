@@ -34,8 +34,8 @@ class MainActivity : ComponentActivity() {
         networkConnectivityManager = NetworkConnectivityManager.getInstance(this)
         networkConnectivityManager.startMonitoring()
 
-        // Initialize Unity Ads SDK for production (Android Game ID: 800430705, TEST_MODE = false)
-        UnityAdsManager.initialize(this)
+        // Initialize Unity Ads SDK (Game ID: "800430705", testMode = true for debug builds, false for release builds)
+        UnityAdsManager.initialize(context = this, testMode = BuildConfig.DEBUG)
 
         setContent {
             UnoRoyaleTheme {

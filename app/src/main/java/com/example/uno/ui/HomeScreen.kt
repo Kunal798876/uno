@@ -29,7 +29,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.uno.R
-import com.example.uno.ads.UnityBannerAd
+import com.example.uno.ads.UnityBannerAdView
 import com.example.uno.model.AiDifficulty
 import com.example.uno.model.UserProfile
 import com.example.uno.ui.theme.*
@@ -473,7 +473,7 @@ fun HomeScreen(
                 .padding(bottom = 2.dp),
             contentAlignment = Alignment.Center
         ) {
-            UnityBannerAd()
+            UnityBannerAdView()
         }
     }
 }

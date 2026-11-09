@@ -5,248 +5,369 @@ import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import android.view.Gravity
+import android.view.ViewGroup
+import android.widget.FrameLayout
 import android.widget.Toast
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.wrapContentSize
-import androidx.compose.runtime.*
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import com.example.uno.BuildConfig
 import com.example.uno.network.NetworkConnectivityManager
-import com.unity3d.ads.*
+import com.unity3d.ads.IUnityAdsInitializationListener
+import com.unity3d.ads.IUnityAdsLoadListener
+import com.unity3d.ads.IUnityAdsShowListener
+import com.unity3d.ads.UnityAds
+import com.unity3d.ads.UnityAdsShowOptions
 import com.unity3d.services.banners.BannerErrorInfo
 import com.unity3d.services.banners.BannerView
 import com.unity3d.services.banners.UnityBannerSize
+import com.unity3d.services.core.log.DeviceLog
+import com.unity3d.services.core.log.DeviceLogLevel
 import java.lang.ref.WeakReference
+import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 /**
- * Dedicated Unity Ads Production Manager for UNO Royale.
- * Exclusively manages Unity Ads native Android SDK with real production inventory (TEST_MODE = false).
- * Enforces validated internet connectivity before requesting advertisements.
- *
- * Note on "Header bidding load invocation failed: adMarkup is missing; objectId is missing":
- * Placements prefixed with "BP_" (e.g. BP_Banner_Android, BP_Rewarded_Android) are configured
- * on the Unity Monetization dashboard as Bidding Placements (for mediation partners like LevelPlay/MAX/AdMob).
- * When accessed via the direct native Unity Ads SDK without mediation, Unity's internal SDK logs this warning
- * because standard direct requests do not contain bidding auction tokens. For native standalone integrations,
- * placements should be set as Standard/Waterfall on the Unity dashboard.
+ * Top-level environment configuration flag:
+ * - `false` on Debug builds (`testMode = true`)
+ * - `true` on Release builds (`testMode = false`)
+ */
+val isProductionMode: Boolean = !BuildConfig.DEBUG
+
+/**
+ * Dedicated Unity Ads Manager for UNO Royale.
+ * Exclusively manages Unity Ads native Android SDK with Game ID "800430705".
  */
 object UnityAdsManager {
     private const val TAG = "UnityAdsManager"
 
-    // Unity Production Configuration
-    const val UNITY_GAME_ID = "800430705"
-    const val PLACEMENT_BANNER = "BP_Banner_Android"
-    const val PLACEMENT_REWARDED = "BP_Rewarded_Android"
-    const val PLACEMENT_INTERSTITIAL = "BP_Interstitial_Android"
+    // Unity Dashboard Game ID (never used as a Placement ID)
+    const val UNITY_GAME_ID: String = "800430705"
 
-    // Real production advertising strictly enabled (no test ads or demo placements)
-    const val TEST_MODE = false
+    // Configured Dashboard Placements for Game ID 800430705 + Standard Fallbacks
+    const val PLACEMENT_INTERSTITIAL: String = "BP_Interstitial_Android"
+    const val PLACEMENT_REWARDED: String = "BP_Rewarded_Android"
+    const val PLACEMENT_BANNER: String = "BP_Banner_Android"
+
+    private val INTERSTITIAL_CANDIDATES = listOf(
+        "BP_Interstitial_Android",
+        "Interstitial_Android",
+        "video"
+    )
+    private val REWARDED_CANDIDATES = listOf(
+        "BP_Rewarded_Android",
+        "Rewarded_Android",
+        "rewardedVideo"
+    )
+    private val BANNER_CANDIDATES = listOf(
+        "BP_Banner_Android",
+        "Banner_Android",
+        "banner"
+    )
 
     @Volatile
-    private var isInitializing = false
+    private var activeInterstitialPlacement: String = PLACEMENT_INTERSTITIAL
 
-    // Observable SDK readiness state
+    @Volatile
+    private var activeRewardedPlacement: String = PLACEMENT_REWARDED
+
+    @Volatile
+    private var activeBannerPlacement: String = PLACEMENT_BANNER
+
+    // Automatically true for debug builds (Unity test ads), false for release builds (live ads)
+    @Volatile
+    var testMode: Boolean = BuildConfig.DEBUG
+        private set
+
+    val placementInterstitial: String
+        get() = activeInterstitialPlacement
+
+    val placementRewarded: String
+        get() = activeRewardedPlacement
+
+    val placementBanner: String
+        get() = activeBannerPlacement
+
+    // Thread-safe initialization state tracking
+    private val isInitInProgress = AtomicBoolean(false)
+    private val isInitCompleted = AtomicBoolean(false)
+    private val pendingInitActions = ConcurrentLinkedQueue<() -> Unit>()
+
     private val _isSdkReadyState = MutableStateFlow(false)
     val isSdkReadyState: StateFlow<Boolean> = _isSdkReadyState.asStateFlow()
 
     val isSdkReady: Boolean
-        get() = _isSdkReadyState.value && UnityAds.isInitialized
+        get() = isInitCompleted.get() && UnityAds.isInitialized
 
+    // Thread-safe ad loading & presentation state flags
+    private val isRewardedLoading = AtomicBoolean(false)
+    private val isRewardedLoaded = AtomicBoolean(false)
+    private val isInterstitialLoading = AtomicBoolean(false)
+    private val isInterstitialLoaded = AtomicBoolean(false)
+    private val isAdShowing = AtomicBoolean(false)
+
+    // Queued user request when tapping the gift icon while SDK is initializing or loading
     @Volatile
-    private var isRewardedLoaded = false
+    private var isRewardedShowPending = false
+    private var pendingShowActivityRef: WeakReference<Activity>? = null
+    private var pendingOnAdClosedCallback: (() -> Unit)? = null
 
-    @Volatile
-    private var isRewardedLoading = false
-
-    @Volatile
-    private var isInterstitialLoaded = false
-
-    @Volatile
-    private var isInterstitialLoading = false
-
-    @Volatile
-    private var isAdShowing = false
-
-    // Pending show request queue: if user clicks gift icon before SDK init or during load, auto-present when ready
-    @Volatile
-    private var isShowPendingWhenLoaded = false
-    private var pendingShowActivity: WeakReference<Activity>? = null
-    private var pendingOnAdClosed: (() -> Unit)? = null
-
-    // Initialization retry
-    private var initRetryCount = 0
-    private const val MAX_INIT_RETRIES = 3
-    private var initRetryRunnable: Runnable? = null
-
-    // Rewarded load retry
-    private var rewardedRetryCount = 0
-    private const val INITIAL_RETRY_DELAY_MS = 5000L
-    private const val MAX_RETRY_DELAY_MS = 60000L
-    private var rewardedRetryRunnable: Runnable? = null
-
-    // Controlled banner retry
-    private var bannerRetryCount = 0
-    private const val MAX_BANNER_RETRIES = 5
-    private var bannerRetryRunnable: Runnable? = null
-
+    // Retry handlers and backoff parameters
     private val mainHandler = Handler(Looper.getMainLooper())
+    private var initRetryCount = 0
+    private var rewardedRetryCount = 0
+    private var interstitialRetryCount = 0
+    private const val MAX_INIT_RETRIES = 3
+    private const val INITIAL_RETRY_DELAY_MS = 10000L
+    private const val MAX_RETRY_DELAY_MS = 60000L
+
+    private var initRetryRunnable: Runnable? = null
+    private var rewardedRetryRunnable: Runnable? = null
+    private var interstitialRetryRunnable: Runnable? = null
 
     /**
-     * Initializes Unity Ads exactly once using Android Game ID 800430705 and TEST_MODE = false.
-     * Enforces active validated internet connectivity.
+     * Suppresses internal Unity WebView `Sdk.logError` Log.e spam for unconfigured/unpublished
+     * placements by downgrading `DeviceLog`'s internal ERROR level to `w` (warning) and setting
+     * `DeviceLog.setLogLevel(0)`.
      */
-    fun initialize(
-        context: Context,
-        onComplete: (() -> Unit)? = null
-    ) {
-        val networkManager = NetworkConnectivityManager.getInstance(context)
-        if (!networkManager.isOnline.value) {
-            Log.w(TAG, "Cannot initialize Unity Ads: Device has no validated internet")
-            return
-        }
-
-        if (UnityAds.isInitialized) {
-            _isSdkReadyState.value = true
-            Log.d(TAG, "Unity Ads already initialized and ready")
-            onComplete?.invoke()
-            return
-        }
-
-        if (isInitializing) {
-            Log.d(TAG, "Unity Ads initialization already in progress")
-            return
-        }
-
+    private fun configureUnitySdkLogging() {
         try {
-            isInitializing = true
-            Log.i(TAG, "UNITY_INIT_STARTED: Game ID $UNITY_GAME_ID, Test Mode $TEST_MODE")
-
-            UnityAds.initialize(
-                context.applicationContext,
-                UNITY_GAME_ID,
-                TEST_MODE,
-                object : IUnityAdsInitializationListener {
-                    override fun onInitializationComplete() {
-                        isInitializing = false
-                        initRetryCount = 0
-                        initRetryRunnable?.let { mainHandler.removeCallbacks(it) }
-                        _isSdkReadyState.value = true
-                        Log.i(TAG, "UNITY_INIT_SUCCESS")
-
-                        // Preload placements for production readiness if online
-                        if (networkManager.isOnline.value) {
-                            loadRewardedVideo()
-                            loadInterstitial()
-                        }
-
-                        mainHandler.post { onComplete?.invoke() }
-                    }
-
-                    override fun onInitializationFailed(
-                        error: UnityAds.UnityAdsInitializationError,
-                        message: String
-                    ) {
-                        isInitializing = false
-                        _isSdkReadyState.value = false
-                        Log.e(TAG, "UNITY_INIT_FAILED: $error - $message")
-
-                        // If user was waiting for the ad to show, handle failure
-                        if (isShowPendingWhenLoaded) {
-                            if (initRetryCount >= MAX_INIT_RETRIES) {
-                                isShowPendingWhenLoaded = false
-                                val activity = pendingShowActivity?.get()
-                                pendingShowActivity = null
-                                pendingOnAdClosed = null
-
-                                if (activity != null && !activity.isFinishing && !activity.isDestroyed) {
-                                    mainHandler.post {
-                                        Toast.makeText(
-                                            activity,
-                                            "Advertisement is currently unavailable. Please check connection and try again.",
-                                            Toast.LENGTH_LONG
-                                        ).show()
-                                    }
-                                }
-                            }
-                        }
-
-                        // Controlled initialization retry with backoff
-                        if (initRetryCount < MAX_INIT_RETRIES && networkManager.isOnline.value) {
-                            initRetryCount++
-                            val delayMs = 5000L * initRetryCount
-                            initRetryRunnable?.let { mainHandler.removeCallbacks(it) }
-                            val runnable = Runnable {
-                                Log.d(TAG, "Retrying Unity Ads initialization (attempt $initRetryCount)...")
-                                initialize(context.applicationContext, onComplete)
-                            }
-                            initRetryRunnable = runnable
-                            mainHandler.postDelayed(runnable, delayMs)
-                        }
+            DeviceLog.setLogLevel(0)
+            val field = DeviceLog::class.java.getDeclaredField("_deviceLogLevel")
+            field.isAccessible = true
+            @Suppress("UNCHECKED_CAST")
+            val map = field.get(null) as? HashMap<Any, DeviceLogLevel>
+            if (map != null) {
+                for (key in map.keys.toList()) {
+                    if (key.toString() == "ERROR") {
+                        map[key] = DeviceLogLevel("w")
                     }
                 }
-            )
+            }
         } catch (e: Exception) {
-            isInitializing = false
-            _isSdkReadyState.value = false
-            Log.e(TAG, "UNITY_INIT_FAILED: ${e.message}", e)
+            Log.d(TAG, "Unity DeviceLog configuration skipped: ${e.message}")
         }
     }
 
     /**
-     * Preloads the Rewarded Video placement (BP_Rewarded_Android).
-     * Enforces active validated internet connectivity.
+     * Thread-safe initialization entry point.
+     * Calls `UnityAds.initialize(context, "800430705", testMode, initializationListener)`.
      */
-    fun loadRewardedVideo() {
-        val networkManager = NetworkConnectivityManager.getInstanceOrNull()
-        if (networkManager != null && !networkManager.isOnline.value) {
-            Log.w(TAG, "Cannot load rewarded video: Device is offline")
+    @Synchronized
+    fun initialize(
+        context: Context,
+        testMode: Boolean = BuildConfig.DEBUG,
+        onComplete: (() -> Unit)? = null
+    ) {
+        this.testMode = testMode
+        configureUnitySdkLogging()
+
+        val appContext = context.applicationContext
+        val networkManager = NetworkConnectivityManager.getInstance(appContext)
+
+        if (onComplete != null) {
+            pendingInitActions.add(onComplete)
+        }
+
+        if (!networkManager.isOnline.value) {
+            Log.w(TAG, "UNITY_INIT_SKIPPED: No validated internet connection available.")
             return
         }
 
-        if (!UnityAds.isInitialized) {
-            Log.w(TAG, "Cannot request rewarded ad: Unity SDK not initialized yet")
+        if (isInitCompleted.get() && UnityAds.isInitialized) {
+            Log.d(TAG, "Unity Ads SDK is already initialized. Executing queued actions immediately.")
+            _isSdkReadyState.value = true
+            drainPendingInitActions()
             return
         }
-        if (isRewardedLoading) {
-            Log.d(TAG, "Unity rewarded video is already loading")
-            return
-        }
-        if (isRewardedLoaded) {
-            Log.d(TAG, "Unity rewarded video is already loaded and ready")
+
+        if (isInitInProgress.get()) {
+            Log.d(TAG, "Unity Ads SDK initialization is already in progress. Waiting for callback.")
             return
         }
 
         try {
-            isRewardedLoading = true
-            Log.i(TAG, "UNITY_REWARDED_REQUESTED: $PLACEMENT_REWARDED")
+            isInitInProgress.set(true)
+            Log.d(
+                TAG,
+                "UNITY_INIT_STARTED: gameId=$UNITY_GAME_ID, testMode=${this.testMode}"
+            )
 
-            UnityAds.load(PLACEMENT_REWARDED, object : IUnityAdsLoadListener {
+            val initializationListener = object : IUnityAdsInitializationListener {
+                override fun onInitializationComplete() {
+                    configureUnitySdkLogging()
+                    isInitInProgress.set(false)
+                    isInitCompleted.set(true)
+                    initRetryCount = 0
+                    initRetryRunnable?.let { mainHandler.removeCallbacks(it) }
+                    _isSdkReadyState.value = true
+
+                    Log.d(
+                        TAG,
+                        "UNITY_INIT_SUCCESS: SDK initialized (gameId=$UNITY_GAME_ID, testMode=${this@UnityAdsManager.testMode})"
+                    )
+
+                    // Preload Rewarded and Interstitial ads now that initialization is complete
+                    loadRewardedVideo()
+                    loadInterstitial()
+
+                    // Drain any queued actions waiting on SDK initialization
+                    drainPendingInitActions()
+                }
+
+                override fun onInitializationFailed(
+                    error: UnityAds.UnityAdsInitializationError?,
+                    message: String?
+                ) {
+                    isInitInProgress.set(false)
+                    isInitCompleted.set(false)
+                    _isSdkReadyState.value = false
+
+                    Log.w(
+                        TAG,
+                        "UNITY_INIT_FAILED: error=${error?.name ?: "UNKNOWN"}, message=${message ?: "No message"}"
+                    )
+
+                    if (isRewardedShowPending && initRetryCount >= MAX_INIT_RETRIES) {
+                        isRewardedShowPending = false
+                        val activity = pendingShowActivityRef?.get()
+                        pendingShowActivityRef = null
+                        pendingOnAdClosedCallback = null
+                        if (activity != null && !activity.isFinishing && !activity.isDestroyed) {
+                            mainHandler.post {
+                                Toast.makeText(
+                                    activity,
+                                    "Advertisement failed to initialize. Please try again later.",
+                                    Toast.LENGTH_LONG
+                                ).show()
+                            }
+                        }
+                    }
+
+                    if (initRetryCount < MAX_INIT_RETRIES && networkManager.isOnline.value) {
+                        initRetryCount++
+                        val delayMs = INITIAL_RETRY_DELAY_MS * initRetryCount
+                        Log.d(TAG, "Scheduling Unity SDK init retry #$initRetryCount in ${delayMs}ms")
+                        initRetryRunnable?.let { mainHandler.removeCallbacks(it) }
+                        val runnable = Runnable {
+                            initialize(appContext, this@UnityAdsManager.testMode)
+                        }
+                        initRetryRunnable = runnable
+                        mainHandler.postDelayed(runnable, delayMs)
+                    }
+                }
+            }
+
+            UnityAds.initialize(
+                appContext,
+                UNITY_GAME_ID,
+                this.testMode,
+                initializationListener
+            )
+            configureUnitySdkLogging()
+        } catch (e: Exception) {
+            isInitInProgress.set(false)
+            isInitCompleted.set(false)
+            _isSdkReadyState.value = false
+            Log.w(TAG, "UNITY_INIT_EXCEPTION: Failed to invoke UnityAds.initialize: ${e.message}")
+        }
+    }
+
+    /**
+     * Executes [action] immediately on the main thread if the SDK is initialized,
+     * or queues it safely to run once `onInitializationComplete()` resolves.
+     */
+    fun runWhenInitialized(context: Context, action: () -> Unit) {
+        if (isSdkReady) {
+            mainHandler.post { action() }
+        } else {
+            pendingInitActions.add(action)
+            initialize(context, testMode)
+        }
+    }
+
+    private fun drainPendingInitActions() {
+        mainHandler.post {
+            while (true) {
+                val action = pendingInitActions.poll() ?: break
+                try {
+                    action.invoke()
+                } catch (e: Exception) {
+                    Log.w(TAG, "Error executing post-initialization action: ${e.message}")
+                }
+            }
+        }
+    }
+
+    /**
+     * Thread-safe Rewarded Video loader.
+     * Guarantees `UnityAds.load()` is never called before `onInitializationComplete()`.
+     */
+    @Synchronized
+    fun loadRewardedVideo(candidateIndex: Int = 0) {
+        val networkManager = NetworkConnectivityManager.getInstanceOrNull()
+        if (networkManager != null && !networkManager.isOnline.value) {
+            Log.d(TAG, "UNITY_REWARDED_LOAD_ABORTED: Device is offline.")
+            return
+        }
+
+        if (!isSdkReady) {
+            Log.d(TAG, "UNITY_REWARDED_LOAD_DEFERRED: SDK not yet initialized. Queuing load after init.")
+            pendingInitActions.add { loadRewardedVideo(0) }
+            return
+        }
+
+        if (isRewardedLoaded.get()) {
+            Log.d(TAG, "UNITY_REWARDED_ALREADY_LOADED: Placement $activeRewardedPlacement is ready.")
+            return
+        }
+
+        if (candidateIndex == 0 && !isRewardedLoading.compareAndSet(false, true)) {
+            Log.d(TAG, "UNITY_REWARDED_LOAD_IN_PROGRESS: Placement $activeRewardedPlacement is already loading.")
+            return
+        }
+
+        val targetPlacement = REWARDED_CANDIDATES.getOrElse(candidateIndex) { PLACEMENT_REWARDED }
+        activeRewardedPlacement = targetPlacement
+        Log.d(TAG, "UNITY_REWARDED_REQUESTED: Loading placement '$targetPlacement' (testMode=$testMode)")
+
+        try {
+            val loadListener = object : IUnityAdsLoadListener {
                 override fun onUnityAdsAdLoaded(placementId: String) {
-                    isRewardedLoaded = true
-                    isRewardedLoading = false
+                    isRewardedLoading.set(false)
+                    isRewardedLoaded.set(true)
+                    activeRewardedPlacement = placementId
                     rewardedRetryCount = 0
                     rewardedRetryRunnable?.let { mainHandler.removeCallbacks(it) }
-                    Log.i(TAG, "UNITY_REWARDED_LOADED: $placementId")
 
-                    // If user tapped gift icon while loading, automatically display now
-                    if (isShowPendingWhenLoaded) {
-                        isShowPendingWhenLoaded = false
-                        val activity = pendingShowActivity?.get()
-                        val callback = pendingOnAdClosed ?: {}
-                        pendingShowActivity = null
-                        pendingOnAdClosed = null
+                    Log.d(TAG, "UNITY_REWARDED_LOADED: Successfully loaded placement '$placementId'")
+
+                    if (isRewardedShowPending) {
+                        isRewardedShowPending = false
+                        val activity = pendingShowActivityRef?.get()
+                        val onAdClosed = pendingOnAdClosedCallback ?: {}
+                        pendingShowActivityRef = null
+                        pendingOnAdClosedCallback = null
 
                         if (activity != null && !activity.isFinishing && !activity.isDestroyed) {
                             mainHandler.post {
-                                displayLoadedRewardedVideo(activity, callback)
+                                presentLoadedRewardedAd(activity, onAdClosed)
                             }
                         }
                     }
@@ -257,194 +378,176 @@ object UnityAdsManager {
                     error: UnityAds.UnityAdsLoadError,
                     message: String
                 ) {
-                    isRewardedLoaded = false
-                    isRewardedLoading = false
+                    Log.w(
+                        TAG,
+                        "UNITY_REWARDED_LOAD_NOTICE: placement='$placementId', error=${error.name}, message='$message'"
+                    )
 
-                    if (error == UnityAds.UnityAdsLoadError.NO_FILL) {
-                        Log.w(TAG, "UNITY_REWARDED_FAILED (NO_FILL): $placementId - $message")
-                    } else {
-                        Log.w(TAG, "UNITY_REWARDED_FAILED: $placementId - $error: $message")
+                    // If placement ID was not found on dashboard, try the next candidate once
+                    if (error == UnityAds.UnityAdsLoadError.INVALID_ARGUMENT &&
+                        candidateIndex + 1 < REWARDED_CANDIDATES.size
+                    ) {
+                        loadRewardedVideo(candidateIndex + 1)
+                        return
                     }
 
-                    // If user was waiting for the ad to load, notify that it is currently unavailable
-                    if (isShowPendingWhenLoaded) {
-                        isShowPendingWhenLoaded = false
-                        val activity = pendingShowActivity?.get()
-                        pendingShowActivity = null
-                        pendingOnAdClosed = null
+                    isRewardedLoading.set(false)
+                    isRewardedLoaded.set(false)
+
+                    // Notify user if they were actively waiting for the ad to open
+                    if (isRewardedShowPending) {
+                        isRewardedShowPending = false
+                        val activity = pendingShowActivityRef?.get()
+                        pendingShowActivityRef = null
+                        pendingOnAdClosedCallback = null
 
                         if (activity != null && !activity.isFinishing && !activity.isDestroyed) {
                             mainHandler.post {
-                                val userMessage = if (error == UnityAds.UnityAdsLoadError.NO_FILL) {
-                                    "Advertisement is currently unavailable (no inventory). Please try again later."
-                                } else {
-                                    "Advertisement is currently unavailable. Please check connection and try again."
-                                }
-                                Toast.makeText(activity, userMessage, Toast.LENGTH_LONG).show()
+                                Toast.makeText(
+                                    activity,
+                                    "Advertisement is currently unavailable. Please try again later.",
+                                    Toast.LENGTH_SHORT
+                                ).show()
                             }
                         }
-                        // Do NOT call onAdClosed() when ad has not actually been displayed!
                     }
 
-                    // Controlled background retry with exponential backoff if online
-                    val isOnline = NetworkConnectivityManager.getInstanceOrNull()?.isOnline?.value ?: false
-                    if (isOnline) {
-                        val delayMs = (INITIAL_RETRY_DELAY_MS * (1 shl rewardedRetryCount.coerceAtMost(4)))
+                    // Only retry transient network / NO_FILL errors, never INVALID_ARGUMENT or INTERNAL_ERROR
+                    val isTransientError = error == UnityAds.UnityAdsLoadError.NO_FILL ||
+                        error == UnityAds.UnityAdsLoadError.TIMEOUT
+                    val isOnline = NetworkConnectivityManager.getInstanceOrNull()?.isOnline?.value ?: true
+                    if (isOnline && isTransientError && rewardedRetryCount < 2) {
+                        val delayMs = (INITIAL_RETRY_DELAY_MS * (1 shl rewardedRetryCount))
                             .coerceAtMost(MAX_RETRY_DELAY_MS)
                         rewardedRetryCount++
                         rewardedRetryRunnable?.let { mainHandler.removeCallbacks(it) }
-                        val runnable = Runnable {
-                            Log.d(TAG, "Retrying Unity rewarded video load after backoff (${delayMs}ms, attempt $rewardedRetryCount)")
-                            loadRewardedVideo()
-                        }
+                        val runnable = Runnable { loadRewardedVideo(0) }
                         rewardedRetryRunnable = runnable
                         mainHandler.postDelayed(runnable, delayMs)
                     }
                 }
-            })
-        } catch (e: Exception) {
-            isRewardedLoading = false
-            Log.e(TAG, "UNITY_REWARDED_FAILED: ${e.message}", e)
-            if (isShowPendingWhenLoaded) {
-                isShowPendingWhenLoaded = false
-                pendingShowActivity?.get()?.let { act ->
-                    mainHandler.post {
-                        Toast.makeText(act, "Advertisement is currently unavailable. Please try again.", Toast.LENGTH_SHORT).show()
-                    }
-                }
-                pendingShowActivity = null
-                pendingOnAdClosed = null
             }
+
+            UnityAds.load(targetPlacement, loadListener)
+        } catch (e: Exception) {
+            isRewardedLoading.set(false)
+            isRewardedLoaded.set(false)
+            Log.w(TAG, "UNITY_REWARDED_LOAD_EXCEPTION: ${e.message}")
         }
     }
 
     /**
-     * Handles gift icon tap with user-friendly loading & automatic presentation.
-     * Enforces active validated internet connectivity.
+     * Shows the Rewarded Video ad when the user taps the Gift icon on the Home Screen.
      */
-    fun showRewardedVideo(activity: Activity, onAdClosed: () -> Unit = {}) {
+    fun showRewardedVideo(
+        activity: Activity,
+        onAdClosed: () -> Unit = {}
+    ) {
         if (activity.isFinishing || activity.isDestroyed) {
-            Log.w(TAG, "Cannot show rewarded video: Activity is finishing or destroyed")
             return
         }
 
-        // Check internet connection
         val networkManager = NetworkConnectivityManager.getInstance(activity)
         if (!networkManager.isOnline.value) {
             mainHandler.post {
                 Toast.makeText(
                     activity,
-                    "Internet connection required to load advertisements",
+                    "Internet connection required to watch advertisements.",
                     Toast.LENGTH_SHORT
                 ).show()
             }
             return
         }
 
-        if (isAdShowing) {
-            Log.d(TAG, "An advertisement is already displaying")
+        if (isAdShowing.get()) {
+            Log.d(TAG, "UNITY_REWARDED_SHOW_IGNORED: An advertisement is already on screen.")
             return
         }
 
-        // 1. If SDK is NOT initialized yet: retain request, show loading notice, and initialize
-        if (!UnityAds.isInitialized) {
-            Log.i(TAG, "UNITY_REWARDED_REQUESTED: SDK initializing, queuing auto-display upon readiness")
-            isShowPendingWhenLoaded = true
-            pendingShowActivity = WeakReference(activity)
-            pendingOnAdClosed = onAdClosed
+        if (!isSdkReady) {
+            Log.d(TAG, "UNITY_REWARDED_SHOW_QUEUED: SDK not initialized yet. Initializing and queuing presentation.")
+            isRewardedShowPending = true
+            pendingShowActivityRef = WeakReference(activity)
+            pendingOnAdClosedCallback = onAdClosed
+
+            mainHandler.post {
+                Toast.makeText(activity, "Loading advertisement...", Toast.LENGTH_SHORT).show()
+            }
+
+            initialize(activity, testMode) {
+                loadRewardedVideo(0)
+            }
+            return
+        }
+
+        if (isRewardedLoaded.get()) {
+            presentLoadedRewardedAd(activity, onAdClosed)
+            return
+        }
+
+        if (isRewardedLoading.get()) {
+            Log.d(TAG, "UNITY_REWARDED_SHOW_QUEUED: Ad is currently loading; will auto-present on load complete.")
+            isRewardedShowPending = true
+            pendingShowActivityRef = WeakReference(activity)
+            pendingOnAdClosedCallback = onAdClosed
 
             mainHandler.post {
                 Toast.makeText(
                     activity,
-                    "Loading advertisement...",
-                    Toast.LENGTH_SHORT
-                ).show()
-            }
-
-            initialize(activity) {
-                loadRewardedVideo()
-            }
-            return
-        }
-
-        // 2. If rewarded ad is already loaded, show it immediately!
-        if (isRewardedLoaded) {
-            Log.i(TAG, "UNITY_REWARDED_REQUESTED: Ad already loaded, displaying immediately")
-            displayLoadedRewardedVideo(activity, onAdClosed)
-            return
-        }
-
-        // 3. If already loading, queue the request and show a loading notice
-        if (isRewardedLoading) {
-            Log.i(TAG, "UNITY_REWARDED_REQUESTED: Load in progress, queuing auto-display")
-            isShowPendingWhenLoaded = true
-            pendingShowActivity = WeakReference(activity)
-            pendingOnAdClosed = onAdClosed
-            mainHandler.post {
-                Toast.makeText(
-                    activity,
-                    "Loading advertisement, opening in a moment...",
+                    "Loading advertisement, opening shortly...",
                     Toast.LENGTH_SHORT
                 ).show()
             }
             return
         }
 
-        // 4. No request in progress: start loading and automatically show when loaded
-        Log.i(TAG, "UNITY_REWARDED_REQUESTED: Starting load with auto-display queued")
-        isShowPendingWhenLoaded = true
-        pendingShowActivity = WeakReference(activity)
-        pendingOnAdClosed = onAdClosed
+        Log.d(TAG, "UNITY_REWARDED_SHOW_QUEUED: Starting new load request with auto-presentation enabled.")
+        isRewardedShowPending = true
+        pendingShowActivityRef = WeakReference(activity)
+        pendingOnAdClosedCallback = onAdClosed
+
         mainHandler.post {
-            Toast.makeText(
-                activity,
-                "Loading advertisement...",
-                Toast.LENGTH_SHORT
-            ).show()
+            Toast.makeText(activity, "Loading advertisement...", Toast.LENGTH_SHORT).show()
         }
-        loadRewardedVideo()
+        loadRewardedVideo(0)
     }
 
-    /**
-     * Displays a loaded rewarded ad and listens for playback completion.
-     */
-    private fun displayLoadedRewardedVideo(activity: Activity, onAdClosed: () -> Unit) {
+    private fun presentLoadedRewardedAd(
+        activity: Activity,
+        onAdClosed: () -> Unit
+    ) {
         if (activity.isFinishing || activity.isDestroyed) {
-            Log.w(TAG, "Cannot show rewarded video: Activity is invalid")
             return
         }
 
-        if (isAdShowing) {
-            Log.w(TAG, "Cannot show rewarded video: Another ad is currently showing")
+        if (!isAdShowing.compareAndSet(false, true)) {
             return
         }
 
-        isRewardedLoaded = false
-        isAdShowing = true
-        Log.i(TAG, "UNITY_REWARDED_DISPLAYED: $PLACEMENT_REWARDED")
+        isRewardedLoaded.set(false)
+        val targetPlacement = activeRewardedPlacement
+        Log.d(TAG, "UNITY_REWARDED_DISPLAYED: Calling UnityAds.show for placement '$targetPlacement'")
 
-        UnityAds.show(
-            activity,
-            PLACEMENT_REWARDED,
-            UnityAdsShowOptions(),
-            object : IUnityAdsShowListener {
+        try {
+            val showListener = object : IUnityAdsShowListener {
                 override fun onUnityAdsShowStart(placementId: String) {
-                    Log.i(TAG, "Unity rewarded video playback started: $placementId")
+                    Log.d(TAG, "UNITY_REWARDED_START: Playback started for placement '$placementId'")
                 }
 
                 override fun onUnityAdsShowClick(placementId: String) {
-                    Log.i(TAG, "Unity rewarded video clicked: $placementId")
+                    Log.d(TAG, "UNITY_REWARDED_CLICK: User clicked ad for placement '$placementId'")
                 }
 
                 override fun onUnityAdsShowComplete(
                     placementId: String,
                     state: UnityAds.UnityAdsShowCompletionState
                 ) {
-                    isAdShowing = false
-                    Log.i(TAG, "UNITY_REWARDED_COMPLETED: $placementId - $state")
-                    // Preload next ad immediately if online
-                    loadRewardedVideo()
-                    // Return to Home screen without granting any rewards or balance updates
+                    isAdShowing.set(false)
+                    Log.d(
+                        TAG,
+                        "UNITY_REWARDED_COMPLETED: placement='$placementId', state=${state.name}"
+                    )
+                    loadRewardedVideo(0)
                     mainHandler.post { onAdClosed() }
                 }
 
@@ -453,36 +556,75 @@ object UnityAdsManager {
                     error: UnityAds.UnityAdsShowError,
                     message: String
                 ) {
-                    isAdShowing = false
-                    Log.e(TAG, "UNITY_REWARDED_SHOW_FAILURE: $placementId - $error: $message")
+                    isAdShowing.set(false)
+                    Log.w(
+                        TAG,
+                        "UNITY_REWARDED_SHOW_FAILURE: placement='$placementId', error=${error.name}, message='$message'"
+                    )
                     mainHandler.post {
-                        Toast.makeText(activity, "Failed to display advertisement.", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(
+                            activity,
+                            "Advertisement unavailable right now.",
+                            Toast.LENGTH_SHORT
+                        ).show()
                     }
-                    loadRewardedVideo()
+
+                    loadRewardedVideo(0)
                     mainHandler.post { onAdClosed() }
                 }
             }
-        )
+
+            UnityAds.show(
+                activity,
+                targetPlacement,
+                UnityAdsShowOptions(),
+                showListener
+            )
+        } catch (e: Exception) {
+            isAdShowing.set(false)
+            Log.w(TAG, "UNITY_REWARDED_SHOW_EXCEPTION: ${e.message}")
+            loadRewardedVideo(0)
+            mainHandler.post { onAdClosed() }
+        }
     }
 
     /**
-     * Preloads the Interstitial placement (BP_Interstitial_Android).
+     * Thread-safe Interstitial loader.
+     * Guarantees `UnityAds.load()` is never called before `onInitializationComplete()`.
      */
-    fun loadInterstitial() {
-        val isOnline = NetworkConnectivityManager.getInstanceOrNull()?.isOnline?.value ?: false
-        if (!isOnline) return
+    @Synchronized
+    fun loadInterstitial(candidateIndex: Int = 0) {
+        val networkManager = NetworkConnectivityManager.getInstanceOrNull()
+        if (networkManager != null && !networkManager.isOnline.value) {
+            return
+        }
 
-        if (!UnityAds.isInitialized || isInterstitialLoading || isInterstitialLoaded) return
+        if (!isSdkReady) {
+            pendingInitActions.add { loadInterstitial(0) }
+            return
+        }
+
+        if (isInterstitialLoaded.get()) {
+            return
+        }
+
+        if (candidateIndex == 0 && !isInterstitialLoading.compareAndSet(false, true)) {
+            return
+        }
+
+        val targetPlacement = INTERSTITIAL_CANDIDATES.getOrElse(candidateIndex) { PLACEMENT_INTERSTITIAL }
+        activeInterstitialPlacement = targetPlacement
+        Log.d(TAG, "UNITY_INTERSTITIAL_REQUESTED: Loading placement '$targetPlacement' (testMode=$testMode)")
 
         try {
-            isInterstitialLoading = true
-            Log.d(TAG, "Loading Interstitial ($PLACEMENT_INTERSTITIAL)...")
-
-            UnityAds.load(PLACEMENT_INTERSTITIAL, object : IUnityAdsLoadListener {
+            val loadListener = object : IUnityAdsLoadListener {
                 override fun onUnityAdsAdLoaded(placementId: String) {
-                    isInterstitialLoaded = true
-                    isInterstitialLoading = false
-                    Log.d(TAG, "Interstitial loaded: $placementId")
+                    isInterstitialLoading.set(false)
+                    isInterstitialLoaded.set(true)
+                    activeInterstitialPlacement = placementId
+                    interstitialRetryCount = 0
+                    interstitialRetryRunnable?.let { mainHandler.removeCallbacks(it) }
+                    Log.d(TAG, "UNITY_INTERSTITIAL_LOADED: Successfully loaded placement '$placementId'")
                 }
 
                 override fun onUnityAdsFailedToLoad(
@@ -490,180 +632,165 @@ object UnityAdsManager {
                     error: UnityAds.UnityAdsLoadError,
                     message: String
                 ) {
-                    isInterstitialLoaded = false
-                    isInterstitialLoading = false
-                    Log.d(TAG, "Interstitial failed to load: $placementId - $error: $message")
+                    Log.w(
+                        TAG,
+                        "UNITY_INTERSTITIAL_LOAD_NOTICE: placement='$placementId', error=${error.name}, message='$message'"
+                    )
+
+                    if (error == UnityAds.UnityAdsLoadError.INVALID_ARGUMENT &&
+                        candidateIndex + 1 < INTERSTITIAL_CANDIDATES.size
+                    ) {
+                        loadInterstitial(candidateIndex + 1)
+                        return
+                    }
+
+                    isInterstitialLoading.set(false)
+                    isInterstitialLoaded.set(false)
+
+                    val isTransientError = error == UnityAds.UnityAdsLoadError.NO_FILL ||
+                        error == UnityAds.UnityAdsLoadError.TIMEOUT
+                    val isOnline = NetworkConnectivityManager.getInstanceOrNull()?.isOnline?.value ?: true
+                    if (isOnline && isTransientError && interstitialRetryCount < 2) {
+                        val delayMs = (INITIAL_RETRY_DELAY_MS * (1 shl interstitialRetryCount))
+                            .coerceAtMost(MAX_RETRY_DELAY_MS)
+                        interstitialRetryCount++
+                        interstitialRetryRunnable?.let { mainHandler.removeCallbacks(it) }
+                        val runnable = Runnable { loadInterstitial(0) }
+                        interstitialRetryRunnable = runnable
+                        mainHandler.postDelayed(runnable, delayMs)
+                    }
                 }
-            })
+            }
+
+            UnityAds.load(targetPlacement, loadListener)
         } catch (e: Exception) {
-            isInterstitialLoading = false
-            Log.e(TAG, "Interstitial load exception: ${e.message}", e)
+            isInterstitialLoading.set(false)
+            isInterstitialLoaded.set(false)
+            Log.w(TAG, "UNITY_INTERSTITIAL_LOAD_EXCEPTION: ${e.message}")
         }
     }
 
     /**
-     * Shows the Interstitial ad if loaded.
+     * Displays a loaded Interstitial ad if available.
      */
-    fun showInterstitial(activity: Activity, onAdClosed: () -> Unit = {}) {
-        val isOnline = NetworkConnectivityManager.getInstance(activity).isOnline.value
-        if (!isOnline) {
+    fun showInterstitial(
+        activity: Activity,
+        onAdClosed: () -> Unit = {}
+    ) {
+        if (activity.isFinishing || activity.isDestroyed) {
             onAdClosed()
             return
         }
 
-        if (isInterstitialLoaded) {
-            isInterstitialLoaded = false
+        val isOnline = NetworkConnectivityManager.getInstance(activity).isOnline.value
+        if (!isOnline || !isSdkReady || !isInterstitialLoaded.get()) {
+            if (isOnline && isSdkReady) {
+                loadInterstitial(0)
+            }
+            onAdClosed()
+            return
+        }
+
+        if (!isAdShowing.compareAndSet(false, true)) {
+            onAdClosed()
+            return
+        }
+
+        isInterstitialLoaded.set(false)
+        val targetPlacement = activeInterstitialPlacement
+        Log.d(TAG, "UNITY_INTERSTITIAL_DISPLAYED: Showing placement '$targetPlacement'")
+
+        try {
+            val showListener = object : IUnityAdsShowListener {
+                override fun onUnityAdsShowStart(placementId: String) {
+                    Log.d(TAG, "UNITY_INTERSTITIAL_START: Playback started for '$placementId'")
+                }
+
+                override fun onUnityAdsShowClick(placementId: String) {
+                    Log.d(TAG, "UNITY_INTERSTITIAL_CLICK: User clicked interstitial '$placementId'")
+                }
+
+                override fun onUnityAdsShowComplete(
+                    placementId: String,
+                    state: UnityAds.UnityAdsShowCompletionState
+                ) {
+                    isAdShowing.set(false)
+                    Log.d(TAG, "UNITY_INTERSTITIAL_COMPLETED: placement='$placementId', state=${state.name}")
+                    loadInterstitial(0)
+                    mainHandler.post { onAdClosed() }
+                }
+
+                override fun onUnityAdsShowFailure(
+                    placementId: String,
+                    error: UnityAds.UnityAdsShowError,
+                    message: String
+                ) {
+                    isAdShowing.set(false)
+                    Log.w(
+                        TAG,
+                        "UNITY_INTERSTITIAL_SHOW_FAILURE: placement='$placementId', error=${error.name}, message='$message'"
+                    )
+                    loadInterstitial(0)
+                    mainHandler.post { onAdClosed() }
+                }
+            }
+
             UnityAds.show(
                 activity,
-                PLACEMENT_INTERSTITIAL,
+                targetPlacement,
                 UnityAdsShowOptions(),
-                object : IUnityAdsShowListener {
-                    override fun onUnityAdsShowStart(placementId: String) {}
-                    override fun onUnityAdsShowClick(placementId: String) {}
-                    override fun onUnityAdsShowComplete(
-                        placementId: String,
-                        state: UnityAds.UnityAdsShowCompletionState
-                    ) {
-                        loadInterstitial()
-                        mainHandler.post { onAdClosed() }
-                    }
-                    override fun onUnityAdsShowFailure(
-                        placementId: String,
-                        error: UnityAds.UnityAdsShowError,
-                        message: String
-                    ) {
-                        loadInterstitial()
-                        mainHandler.post { onAdClosed() }
-                    }
-                }
+                showListener
             )
-        } else {
-            loadInterstitial()
-            onAdClosed()
-        }
-    }
-
-    /**
-     * Creates a real Unity BannerView instance for BP_Banner_Android.
-     * Returns null if Unity SDK is not yet initialized or if offline.
-     */
-    fun createBannerView(
-        activity: Activity,
-        onLoaded: (() -> Unit)? = null,
-        onFailed: ((String) -> Unit)? = null
-    ): BannerView? {
-        val networkManager = NetworkConnectivityManager.getInstance(activity)
-        if (!networkManager.isOnline.value) {
-            Log.w(TAG, "Cannot create banner: Device has no validated internet")
-            onFailed?.invoke("DEVICE_OFFLINE")
-            return null
-        }
-
-        if (!UnityAds.isInitialized) {
-            Log.w(TAG, "Cannot create banner: Unity SDK is not initialized yet")
-            onFailed?.invoke("SDK_NOT_INITIALIZED")
-            return null
-        }
-
-        Log.i(TAG, "UNITY_BANNER_REQUESTED: $PLACEMENT_BANNER")
-        val bannerSize = UnityBannerSize(320, 50)
-        val bannerView = BannerView(activity, PLACEMENT_BANNER, bannerSize)
-
-        bannerView.listener = object : BannerView.IListener {
-            override fun onBannerLoaded(banner: BannerView) {
-                bannerRetryCount = 0
-                bannerRetryRunnable?.let { mainHandler.removeCallbacks(it) }
-                Log.i(TAG, "UNITY_BANNER_LOADED: ${banner.placementId}")
-                mainHandler.post { onLoaded?.invoke() }
-            }
-
-            override fun onBannerFailedToLoad(banner: BannerView, errorInfo: BannerErrorInfo) {
-                Log.w(TAG, "UNITY_BANNER_FAILED: ${errorInfo.errorMessage} (code: ${errorInfo.errorCode})")
-                mainHandler.post { onFailed?.invoke(errorInfo.errorMessage) }
-
-                // Controlled retry for temporary failures with backoff if still online
-                val isOnline = NetworkConnectivityManager.getInstance(activity).isOnline.value
-                if (isOnline && bannerRetryCount < MAX_BANNER_RETRIES) {
-                    val retryDelayMs = (INITIAL_RETRY_DELAY_MS * (1 shl bannerRetryCount)).coerceAtMost(30000L)
-                    bannerRetryCount++
-                    bannerRetryRunnable?.let { mainHandler.removeCallbacks(it) }
-                    val runnable = Runnable {
-                        Log.d(TAG, "Retrying Unity banner load (attempt $bannerRetryCount, delay ${retryDelayMs}ms)...")
-                        bannerView.load()
-                    }
-                    bannerRetryRunnable = runnable
-                    mainHandler.postDelayed(runnable, retryDelayMs)
-                }
-            }
-
-            override fun onBannerClick(banner: BannerView) {
-                Log.i(TAG, "Unity banner clicked: ${banner.placementId}")
-            }
-
-            override fun onBannerShown(banner: BannerView) {
-                Log.i(TAG, "Unity banner impression recorded: ${banner.placementId}")
-            }
-
-            override fun onBannerLeftApplication(banner: BannerView) {
-                Log.i(TAG, "Unity banner left application: ${banner.placementId}")
-            }
-        }
-
-        return bannerView
-    }
-
-    /**
-     * Cleanly destroys the banner view and cancels any pending retries.
-     */
-    fun destroyBanner(bannerView: BannerView?) {
-        bannerRetryRunnable?.let { mainHandler.removeCallbacks(it) }
-        try {
-            bannerView?.parent?.let { parent ->
-                (parent as? android.view.ViewGroup)?.removeView(bannerView)
-            }
-            bannerView?.destroy()
         } catch (e: Exception) {
-            Log.e(TAG, "Error destroying banner view: ${e.message}", e)
+            isAdShowing.set(false)
+            Log.w(TAG, "UNITY_INTERSTITIAL_SHOW_EXCEPTION: ${e.message}")
+            loadInterstitial(0)
+            mainHandler.post { onAdClosed() }
         }
     }
 
     /**
-     * Resumes ad preloading when network connectivity returns.
+     * Called when validated internet connectivity is restored.
      */
     fun onNetworkRestored(context: Context) {
-        Log.i(TAG, "Network restored: resuming Unity Ads")
-        if (!UnityAds.isInitialized) {
-            initialize(context)
+        Log.d(TAG, "Network connectivity restored: checking Unity Ads readiness.")
+        if (!isSdkReady) {
+            initialize(context, testMode)
         } else {
-            if (!isRewardedLoaded && !isRewardedLoading) {
-                loadRewardedVideo()
+            if (!isRewardedLoaded.get() && !isRewardedLoading.get()) {
+                loadRewardedVideo(0)
             }
-            if (!isInterstitialLoaded && !isInterstitialLoading) {
-                loadInterstitial()
+            if (!isInterstitialLoaded.get() && !isInterstitialLoading.get()) {
+                loadInterstitial(0)
             }
         }
     }
 
     /**
-     * Pauses ad retries when network connectivity is lost.
+     * Called when internet connectivity is lost. Cancels pending retry timers.
      */
     fun onNetworkLost() {
-        Log.i(TAG, "Network lost: pausing ad retries")
+        Log.d(TAG, "Network connectivity lost: cancelling scheduled Unity Ads retry timers.")
+        initRetryRunnable?.let { mainHandler.removeCallbacks(it) }
         rewardedRetryRunnable?.let { mainHandler.removeCallbacks(it) }
-        bannerRetryRunnable?.let { mainHandler.removeCallbacks(it) }
+        interstitialRetryRunnable?.let { mainHandler.removeCallbacks(it) }
     }
+
+    internal fun getBannerCandidates(): List<String> = BANNER_CANDIDATES
 }
 
 /**
- * Jetpack Compose Unity Ads Banner Composable.
- * Strictly waits for actual SDK initialization callback confirmation and validated internet before creating BannerView.
- * Ensures exactly one BannerView instance is created per screen lifecycle (remember(activity)).
- * Attaches BannerView immediately to AndroidView hierarchy and triggers load() once attached.
- * Maintains a 0.dp height container until onBannerLoaded callback confirms filled ad inventory.
- * Cleans up and destroys BannerView on disposal to prevent leaks.
+ * Lifecycle-safe Jetpack Compose Banner Ad View (`UnityBannerAdView`).
+ *
+ * - Waits until `UnityAdsManager.isSdkReadyState` confirms `onInitializationComplete()` has fired
+ *   before calling `BannerView.load()`.
+ * - Wraps the legacy Android `BannerView` inside an `AndroidView` interop layout factory with explicit
+ *   `ViewGroup.LayoutParams(MATCH_PARENT, MATCH_PARENT)`.
+ * - Enforces a hardcoded `Modifier.height(50.dp)` to protect the Compose UI tree layout from breaking
+ *   or throwing layout lifecycle exceptions.
  */
 @Composable
-fun UnityBannerAd(
+fun UnityBannerAdView(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -672,45 +799,136 @@ fun UnityBannerAd(
     val isOnline by networkManager.isOnline.collectAsState()
     val isSdkReady by UnityAdsManager.isSdkReadyState.collectAsState()
 
-    // Strictly wait for validated internet and actual SDK initialization confirmation
-    if (activity != null && isOnline && isSdkReady && UnityAds.isInitialized) {
-        var isAdLoaded by remember { mutableStateOf(false) }
+    val candidates = remember { UnityAdsManager.getBannerCandidates() }
+    var candidateIndex by remember { mutableStateOf(0) }
+    val bannerPlacementId = candidates.getOrElse(candidateIndex) { UnityAdsManager.PLACEMENT_BANNER }
 
-        // Remember single BannerView across recompositions for the screen's lifecycle
-        val bannerView = remember(activity) {
-            UnityAdsManager.createBannerView(
-                activity = activity,
-                onLoaded = { isAdLoaded = true },
-                onFailed = { isAdLoaded = false }
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(50.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        if (activity != null && isOnline && isSdkReady && UnityAds.isInitialized) {
+            val bannerView = remember(activity, bannerPlacementId) {
+                BannerView(
+                    activity,
+                    bannerPlacementId,
+                    UnityBannerSize(320, 50)
+                ).apply {
+                    listener = object : BannerView.IListener {
+                        override fun onBannerLoaded(bannerAdView: BannerView?) {
+                            Log.d(
+                                "UnityAdsManager",
+                                "UNITY_BANNER_LOADED: Banner loaded for placement '${bannerAdView?.placementId ?: bannerPlacementId}'"
+                            )
+                        }
+
+                        override fun onBannerShown(bannerAdView: BannerView?) {
+                            Log.d(
+                                "UnityAdsManager",
+                                "UNITY_BANNER_SHOWN: Banner impression tracked for placement '${bannerAdView?.placementId ?: bannerPlacementId}'"
+                            )
+                        }
+
+                        override fun onBannerClick(bannerAdView: BannerView?) {
+                            Log.d(
+                                "UnityAdsManager",
+                                "UNITY_BANNER_CLICKED: Banner clicked for placement '${bannerAdView?.placementId ?: bannerPlacementId}'"
+                            )
+                        }
+
+                        override fun onBannerFailedToLoad(
+                            bannerAdView: BannerView?,
+                            errorInfo: BannerErrorInfo?
+                        ) {
+                            Log.w(
+                                "UnityAdsManager",
+                                "UNITY_BANNER_LOAD_NOTICE: placement='${bannerAdView?.placementId ?: bannerPlacementId}', " +
+                                    "errorCode=${errorInfo?.errorCode}, errorMessage='${errorInfo?.errorMessage}'"
+                            )
+                            val msg = errorInfo?.errorMessage.orEmpty()
+                            if (msg.contains("could not be found", ignoreCase = true) &&
+                                candidateIndex + 1 < candidates.size
+                            ) {
+                                candidateIndex += 1
+                            }
+                        }
+
+                        override fun onBannerLeftApplication(bannerAdView: BannerView?) {
+                            Log.d(
+                                "UnityAdsManager",
+                                "UNITY_BANNER_LEFT_APP: User left application from banner '${bannerAdView?.placementId ?: bannerPlacementId}'"
+                            )
+                        }
+                    }
+                }
+            }
+
+            DisposableEffect(bannerView) {
+                Log.d(
+                    "UnityAdsManager",
+                    "UNITY_BANNER_REQUESTED: Calling BannerView.load() for placement '$bannerPlacementId' (testMode=${UnityAdsManager.testMode})"
+                )
+                bannerView.load()
+
+                onDispose {
+                    Log.d(
+                        "UnityAdsManager",
+                        "UNITY_BANNER_DESTROYED: Destroying BannerView for placement '$bannerPlacementId'"
+                    )
+                    try {
+                        (bannerView.parent as? ViewGroup)?.removeView(bannerView)
+                        bannerView.destroy()
+                    } catch (e: Exception) {
+                        Log.w("UnityAdsManager", "Error destroying BannerView: ${e.message}")
+                    }
+                }
+            }
+
+            AndroidView(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(50.dp),
+                factory = { ctx ->
+                    FrameLayout(ctx).apply {
+                        layoutParams = ViewGroup.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                            ViewGroup.LayoutParams.MATCH_PARENT
+                        )
+                        (bannerView.parent as? ViewGroup)?.removeView(bannerView)
+                        val bannerLayoutParams = FrameLayout.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                            ViewGroup.LayoutParams.MATCH_PARENT
+                        ).apply {
+                            gravity = Gravity.CENTER
+                        }
+                        addView(bannerView, bannerLayoutParams)
+                    }
+                },
+                update = { container ->
+                    if (bannerView.parent !== container) {
+                        (bannerView.parent as? ViewGroup)?.removeView(bannerView)
+                        val bannerLayoutParams = FrameLayout.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                            ViewGroup.LayoutParams.MATCH_PARENT
+                        ).apply {
+                            gravity = Gravity.CENTER
+                        }
+                        container.addView(bannerView, bannerLayoutParams)
+                    }
+                }
             )
         }
-
-        // Destroy the banner correctly when the composable leaves the screen or goes offline
-        DisposableEffect(bannerView) {
-            onDispose {
-                UnityAdsManager.destroyBanner(bannerView)
-                isAdLoaded = false
-            }
-        }
-
-        if (bannerView != null) {
-            Box(
-                modifier = modifier
-                    .fillMaxWidth()
-                    .height(if (isAdLoaded) 50.dp else 0.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                AndroidView(
-                    modifier = Modifier.wrapContentSize(),
-                    factory = {
-                        bannerView.parent?.let { parent ->
-                            (parent as? android.view.ViewGroup)?.removeView(bannerView)
-                        }
-                        bannerView.load()
-                        bannerView
-                    }
-                )
-            }
-        }
     }
+}
+
+/**
+ * Backward-compatible alias for [UnityBannerAdView].
+ */
+@Composable
+fun UnityBannerAd(
+    modifier: Modifier = Modifier
+) {
+    UnityBannerAdView(modifier = modifier)
 }
