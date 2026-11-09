@@ -50,6 +50,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 }
 
@@ -67,7 +68,7 @@ dependencies {
     implementation(libs.androidx.navigation.compose)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.serialization.json)
-    implementation(libs.startapp.inapp.sdk)
+    implementation(libs.unity.ads)
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)

@@ -12,7 +12,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
-import com.example.uno.ads.AdManager
+import com.example.uno.ads.UnityAdsManager
 import com.example.uno.network.NetworkMonitor
 import com.example.uno.ui.*
 import com.example.uno.ui.components.*
@@ -28,8 +28,8 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
-        // Initialize Start.io Ads SDK
-        AdManager.initialize(this)
+        // Initialize Unity Ads SDK for production (Android Game ID: 800430705, TEST_MODE = false)
+        UnityAdsManager.initialize(this)
 
         // Initialize network monitor for ad availability
         networkMonitor = NetworkMonitor(this)

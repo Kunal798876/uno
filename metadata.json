@@ -1,6 +1,6 @@
 {
   "name": "Uno Royale : 2 player",
-  "description": "Fast-paced portrait UNO duel with animated card transitions, intelligent AI opponent, custom house rules, Start.io banner and video ads, and authorized app-ads.txt seller entries.",
+  "description": "Fast-paced portrait UNO duel with animated card transitions, intelligent AI opponent, custom house rules, native Unity Ads production advertising, and authorized app-ads.txt seller entries.",
   "requestFramePermissions": [],
   "majorCapabilities": [
     "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"

@@ -5,7 +5,7 @@ import android.app.Application
 import android.content.Context
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.uno.ads.AdManager
+import com.example.uno.ads.UnityAdsManager
 import com.example.uno.logic.UnoEngine
 import com.example.uno.model.*
 import com.example.uno.sound.SoundEffects
@@ -153,13 +153,13 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun onOpenGiftClicked(activity: Activity) {
-        // Start.io Rewarded Video Ad on gift click
-        // Simply triggers video advertisement experience. User returns to Home screen after ad closes.
+        // Native Unity Ads Rewarded Video (BP_Rewarded_Android)
+        // Triggers video advertisement experience. User returns to Home screen after ad finishes or closes.
         // No rewards, stars, coins, points, or balance modifications are granted.
-        AdManager.showRewardedVideo(
+        UnityAdsManager.showRewardedVideo(
             activity = activity,
             onAdClosed = {
-                // User returned to Home screen - no rewards granted
+                // User returned to Home screen - no rewards or balances granted
             }
         )
     }

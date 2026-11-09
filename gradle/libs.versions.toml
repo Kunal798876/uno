@@ -12,10 +12,10 @@ navigationCompose = "2.8.4"
 kotlinxCoroutines = "1.9.0"
 kotlinxSerialization = "1.7.3"
 materialIconsExtended = "1.7.5"
-startapp = "5.4.0"
+unityAds = "4.12.5"
 
 [libraries]
-startapp-inapp-sdk = { group = "com.startapp", name = "inapp-sdk", version.ref = "startapp" }
+unity-ads = { group = "com.unity3d.ads", name = "unity-ads", version.ref = "unityAds" }
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 androidx-junit = { group = "androidx.test.ext", name = "junit", version.ref = "junitVersion" }

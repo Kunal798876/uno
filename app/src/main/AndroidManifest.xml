@@ -26,10 +26,6 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
-        <!-- Start.io Production Ads SDK App ID -->
-        <meta-data
-            android:name="com.startapp.sdk.APPLICATION_ID"
-            android:value="210911961" />
     </application>
 
 </manifest>

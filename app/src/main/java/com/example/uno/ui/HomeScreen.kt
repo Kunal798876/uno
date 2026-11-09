@@ -29,7 +29,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.uno.R
-import com.example.uno.ads.StartIoBannerAd
+import com.example.uno.ads.UnityBannerAd
 import com.example.uno.model.AiDifficulty
 import com.example.uno.model.UserProfile
 import com.example.uno.ui.theme.*
@@ -463,7 +463,7 @@ fun HomeScreen(
         }
 
         // =========================================================================
-        // BOTTOM DOCKED: Start.io Banner Ad Container
+        // BOTTOM DOCKED: Unity Ads Banner Container (BP_Banner_Android)
         // Pinned to the very bottom screen edge with navigation bar insets
         // =========================================================================
         Box(
@@ -474,7 +474,7 @@ fun HomeScreen(
                 .padding(bottom = 2.dp),
             contentAlignment = Alignment.Center
         ) {
-            StartIoBannerAd()
+            UnityBannerAd()
         }
     }
 }
