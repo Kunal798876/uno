@@ -98,7 +98,7 @@ fun FlyingCardOverlay(
 }
 
 // ---------------------------------------------------------------------------
-// HOME SCREEN BOTTOM TEST BANNER AD (320x50 Standard AdMob Banner)
+// HOME SCREEN BOTTOM BANNER AD (Standard Start.io Banner)
 // ---------------------------------------------------------------------------
 @Composable
 fun HomeBottomTestBannerAd(

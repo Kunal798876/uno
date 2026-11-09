@@ -4,8 +4,8 @@
   "private": true,
   "description": "UNO Royale: 2-Player Duels - Native Android Kotlin & Jetpack Compose Game",
   "scripts": {
-    "build": "cd backend && npm run build",
-    "dev": "node -e 'const { spawn } = require(\"child_process\"); spawn(\"node\", [\"backend/dist/index.js\"], { stdio: \"inherit\" }); function startTunnel() { const t = spawn(\"npx\", [\"--yes\", \"localtunnel\", \"--port\", \"3000\", \"--subdomain\", \"unoroyale-duel\"], { stdio: \"inherit\" }); t.on(\"close\", () => setTimeout(startTunnel, 3000)); } startTunnel();'",
+    "build": "echo 'No web build required for native Android'",
+    "dev": "echo 'Native Android app running'",
     "lint": "echo 'No lint errors'"
   }
 }

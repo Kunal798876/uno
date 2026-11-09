@@ -8,10 +8,6 @@ import androidx.lifecycle.viewModelScope
 import com.example.uno.ads.AdManager
 import com.example.uno.logic.UnoEngine
 import com.example.uno.model.*
-import com.example.uno.network.MultiplayerEvent
-import com.example.uno.network.MultiplayerRepository
-import com.example.uno.network.RoomInfo
-import com.example.uno.network.SocketConnectionStatus
 import com.example.uno.sound.SoundEffects
 import java.util.UUID
 import kotlinx.coroutines.Job
@@ -26,7 +22,6 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     private val prefs = application.getSharedPreferences("uno_device_prefs", Context.MODE_PRIVATE)
 
     val sounds = SoundEffects(application.applicationContext)
-    val multiplayerRepo = MultiplayerRepository(application.applicationContext)
 
     private val _currentScreen = MutableStateFlow("home")
     val currentScreen: StateFlow<String> = _currentScreen.asStateFlow()
@@ -60,7 +55,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     private val _gameState = MutableStateFlow<GameState?>(null)
     val gameState: StateFlow<GameState?> = _gameState.asStateFlow()
 
-    private val _localPlayerId = MutableStateFlow("player_1")
+    private val _localPlayerId = MutableStateFlow("player_local")
     val localPlayerId: StateFlow<String> = _localPlayerId.asStateFlow()
 
     private val _activeEmotes = MutableStateFlow<Map<String, EmoteMessage>>(emptyMap())
@@ -87,11 +82,6 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     private val _isGamePaused = MutableStateFlow(false)
     val isGamePaused: StateFlow<Boolean> = _isGamePaused.asStateFlow()
 
-    // Multiplayer room & connection
-    val currentRoom: StateFlow<RoomInfo?> = multiplayerRepo.currentRoom
-    val countdownSeconds: StateFlow<Int?> = multiplayerRepo.countdownSeconds
-    val socketConnectionStatus: StateFlow<SocketConnectionStatus> = multiplayerRepo.socketManager.connectionStatus
-
     val notifications = com.example.uno.notification.NotificationHelper(application.applicationContext)
 
     private val _isNotificationsEnabled = MutableStateFlow(notifications.hasNotificationPermission())
@@ -103,95 +93,6 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     init {
         if (_isMusicOn.value && !_isMuted.value) {
             sounds.startBgm()
-        }
-
-        // Listen for authoritative multiplayer state updates from server
-        viewModelScope.launch {
-            multiplayerRepo.multiplayerGameState.collect { remoteState ->
-                if (remoteState != null) {
-                    _gameState.value = remoteState
-                    if (_currentScreen.value != "playing" && remoteState.status == GameStatus.PLAYING) {
-                        _currentScreen.value = "playing"
-                    }
-                    if (remoteState.status == GameStatus.GAMEOVER) {
-                        onGameOver(remoteState)
-                    }
-                }
-            }
-        }
-
-        // Listen for multiplayer remote events
-        viewModelScope.launch {
-            multiplayerRepo.events.collect { event ->
-                handleMultiplayerEvent(event)
-            }
-        }
-    }
-
-    private fun handleMultiplayerEvent(event: MultiplayerEvent) {
-        when (event) {
-            is MultiplayerEvent.CardPlayed -> {
-                sounds.playCardPlay()
-                // Remote player played card
-                _flightAnimation.value = CardFlightAnimation(
-                    id = UUID.randomUUID().toString(),
-                    card = null,
-                    isBack = true,
-                    type = "play",
-                    startOffsetX = 0f,
-                    startOffsetY = -240f,
-                    targetOffsetX = 0f,
-                    targetOffsetY = -10f,
-                    durationMs = 500
-                )
-                viewModelScope.launch {
-                    delay(500)
-                    _flightAnimation.value = null
-                }
-
-                if (event.isAttack && event.attackCount > 0) {
-                    sounds.playPenalty()
-                    _flightAnimation.value = CardFlightAnimation(
-                        id = UUID.randomUUID().toString(),
-                        card = null,
-                        isBack = true,
-                        type = "attack",
-                        count = event.attackCount,
-                        startOffsetX = -130f,
-                        startOffsetY = 65f,
-                        targetOffsetX = 0f,
-                        targetOffsetY = 280f,
-                        durationMs = 800
-                    )
-                    viewModelScope.launch {
-                        delay(800)
-                        _flightAnimation.value = null
-                    }
-                }
-            }
-            is MultiplayerEvent.CardDrawn -> {
-                sounds.playCardDraw()
-            }
-            is MultiplayerEvent.EmoteReceived -> {
-                val map = _activeEmotes.value.toMutableMap()
-                map[event.senderId] = EmoteMessage(event.emoji, event.text)
-                _activeEmotes.value = map
-
-                viewModelScope.launch {
-                    delay(3500)
-                    val cur = _activeEmotes.value.toMutableMap()
-                    if (cur[event.senderId]?.emoji == event.emoji) {
-                        cur.remove(event.senderId)
-                        _activeEmotes.value = cur
-                    }
-                }
-            }
-            is MultiplayerEvent.PlayerConnectionChanged -> {
-                // Connection indicator updated in RoomInfo
-            }
-            is MultiplayerEvent.PlayerLeft -> {
-                // Handled in room state
-            }
         }
     }
 
@@ -242,6 +143,10 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         _rules.value = newRules
     }
 
+    fun setAiDifficulty(difficulty: AiDifficulty) {
+        _rules.value = _rules.value.copy(aiDifficulty = difficulty)
+    }
+
     fun resetStats() {
         _userProfile.value = _userProfile.value.copy(gamesWon = 0, gamesPlayed = 0)
         prefs.edit()
@@ -251,21 +156,17 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun onOpenGiftClicked(activity: Activity) {
-        // Direct Rewarded Video Ad on gift click
+        // Start.io Rewarded Video Ad on gift click
         AdManager.showRewardedAd(
             activity = activity,
             onRewardEarned = {
                 onAdRewardClaimed()
             },
             onFallbackRequired = {
-                // If AdMob no-fill / network issue, fallback to full interactive overlay
+                // If ad not loaded or offline, trigger interactive fallback overlay
                 _showTestAd.value = true
             }
         )
-    }
-
-    fun onOpenGiftDirectAd() {
-        _showTestAd.value = true
     }
 
     fun onAdRewardClaimed() {
@@ -291,18 +192,13 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         if (!_isMuted.value && _isMusicOn.value) {
             sounds.resumeBgm()
         }
-        // Auto-reconnect multiplayer session if disconnected
-        val room = currentRoom.value
-        if (room != null && socketConnectionStatus.value == SocketConnectionStatus.DISCONNECTED) {
-            multiplayerRepo.reconnectSession { _, _ -> }
-        }
     }
 
     fun resumeFromPause() {
         _isGamePaused.value = false
         if (_currentScreen.value == "playing" && _gameState.value?.status == GameStatus.PLAYING) {
             val state = _gameState.value
-            if (state != null && !state.isCustomRoom) {
+            if (state != null) {
                 startTurnTimer()
                 checkAiTurn()
             }
@@ -315,13 +211,17 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     // =========================================================================
-    // OFFLINE AI MATCH (Completely preserved and intact)
+    // FAST LOCAL AI MATCH (100% Offline AI Gameplay)
     // =========================================================================
-    fun startAiMatch() {
+    fun startAiMatch(chosenDifficulty: AiDifficulty? = null) {
+        if (chosenDifficulty != null) {
+            _rules.value = _rules.value.copy(aiDifficulty = chosenDifficulty)
+        }
+
         viewModelScope.launch {
             _isLoading.value = true
-            _loadingMessage.value = "Shuffling cards & setting table..."
-            delay(500)
+            _loadingMessage.value = "Shuffling deck & starting duel vs AI..."
+            delay(400)
 
             val p1 = Player(
                 id = "player_local",
@@ -329,10 +229,20 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                 avatar = _userProfile.value.avatar,
                 isAi = false
             )
+            val aiName = when (_rules.value.aiDifficulty) {
+                AiDifficulty.EASY -> "Novice Bot"
+                AiDifficulty.MEDIUM -> "Pro Doris"
+                AiDifficulty.HARD -> "Grandmaster AI"
+            }
+            val aiAvatar = when (_rules.value.aiDifficulty) {
+                AiDifficulty.EASY -> "🤖"
+                AiDifficulty.MEDIUM -> "👩"
+                AiDifficulty.HARD -> "🧠"
+            }
             val p2 = Player(
                 id = "player_ai",
-                name = "Doris",
-                avatar = "👩",
+                name = aiName,
+                avatar = aiAvatar,
                 isAi = true
             )
             _localPlayerId.value = "player_local"
@@ -348,81 +258,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     // =========================================================================
-    // ONLINE MULTIPLAYER (Socket.IO + Redis Authoritative Backend)
-    // =========================================================================
-
-    val backendUrl: StateFlow<String> = multiplayerRepo.backendUrl
-
-    fun setBackendUrl(url: String) {
-        multiplayerRepo.setBackendUrl(url)
-    }
-
-    suspend fun testServerConnection(url: String): Pair<Boolean, String> {
-        return multiplayerRepo.testConnection(url)
-    }
-
-    fun createCustomRoom(onResult: (Boolean, String?) -> Unit) {
-        _isLoading.value = true
-        _loadingMessage.value = "Creating room on server..."
-        multiplayerRepo.createRoom(
-            nickname = _userProfile.value.name,
-            avatar = _userProfile.value.avatar
-        ) { success, roomCodeOrError, room ->
-            _isLoading.value = false
-            if (success && roomCodeOrError != null) {
-                _localPlayerId.value = multiplayerRepo.sessionManager.guestId
-                onResult(true, roomCodeOrError)
-            } else {
-                onResult(false, roomCodeOrError ?: "Network connection failed. Please check internet.")
-            }
-        }
-    }
-
-    fun joinCustomRoom(
-        roomCode: String,
-        guestName: String = "",
-        guestAvatar: String = "🦊",
-        onJoined: (Boolean, String?) -> Unit
-    ) {
-        _isLoading.value = true
-        _loadingMessage.value = "Connecting to room $roomCode..."
-        val resolvedName = guestName.trim().ifEmpty { _userProfile.value.name }
-        val resolvedAvatar = if (guestAvatar.isNotEmpty()) guestAvatar else _userProfile.value.avatar
-
-        multiplayerRepo.joinRoom(
-            roomCode = roomCode,
-            nickname = resolvedName,
-            avatar = resolvedAvatar
-        ) { success, error, _ ->
-            _isLoading.value = false
-            if (success) {
-                _localPlayerId.value = multiplayerRepo.sessionManager.guestId
-                onJoined(true, null)
-            } else {
-                onJoined(false, error ?: "Room not found or full")
-            }
-        }
-    }
-
-    fun setReady(isReady: Boolean) {
-        multiplayerRepo.setReady(isReady)
-    }
-
-    fun startMultiplayerGame(onResult: (Boolean, String?) -> Unit) {
-        _isLoading.value = true
-        _loadingMessage.value = "Dealing authoritative deck..."
-        multiplayerRepo.startGame { success, error ->
-            _isLoading.value = false
-            onResult(success, error)
-        }
-    }
-
-    fun onFriendJoined(guestName: String = "Friend", guestAvatar: String = "🦊") {
-        // Handled via Socket.IO room_updated event
-    }
-
-    // =========================================================================
-    // GAMEPLAY ACTIONS (Works for both Offline AI and Authoritative Server)
+    // GAMEPLAY ACTIONS
     // =========================================================================
 
     fun onPlayCard(cardId: String, chosenColor: CardColor? = null, sourceXOffset: Float = 0f) {
@@ -430,7 +266,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         val currentP = state.players[state.currentTurnIndex]
         val card = currentP.hand.find { it.id == cardId } ?: return
 
-        // CHECK IF LEGAL FIRST!
+        // Validate legality
         val topCard = state.discardPile.lastOrNull()
         val isLegal = topCard != null && UnoEngine.isCardPlayable(
             card = card,
@@ -454,32 +290,8 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
 
         val isLocal = currentP.id == _localPlayerId.value
 
-        // MULTIPLAYER MODE: Send to authoritative server
-        if (state.isCustomRoom) {
-            _animatingCardId.value = cardId
-            val flightDuration = 550
-            _flightAnimation.value = CardFlightAnimation(
-                id = UUID.randomUUID().toString(),
-                card = card,
-                type = "play",
-                startOffsetX = sourceXOffset,
-                startOffsetY = 280f,
-                targetOffsetX = 0f,
-                targetOffsetY = -10f,
-                durationMs = flightDuration
-            )
-            viewModelScope.launch {
-                delay(flightDuration.toLong())
-                _animatingCardId.value = null
-                _flightAnimation.value = null
-                multiplayerRepo.playCard(cardId, chosenColor, sourceXOffset)
-            }
-            return
-        }
-
-        // OFFLINE AI MODE
         _animatingCardId.value = cardId
-        val flightDuration = 600
+        val flightDuration = 550
         _flightAnimation.value = CardFlightAnimation(
             id = UUID.randomUUID().toString(),
             card = card,
@@ -555,16 +367,6 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
             durationMs = 700
         )
 
-        if (state.isCustomRoom) {
-            viewModelScope.launch {
-                delay(700)
-                _flightAnimation.value = null
-                multiplayerRepo.drawCard()
-            }
-            return
-        }
-
-        // OFFLINE AI MODE
         viewModelScope.launch {
             delay(700)
             val currentState = _gameState.value ?: return@launch
@@ -583,11 +385,6 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         val currentP = state.players[state.currentTurnIndex]
         if (!state.hasDrawnThisTurn) return
 
-        if (state.isCustomRoom) {
-            multiplayerRepo.skipTurn()
-            return
-        }
-
         sounds.playCardSwoop()
         val nextState = UnoEngine.executeSkipTurn(state, currentP.id)
         _gameState.value = nextState
@@ -599,12 +396,6 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         val state = _gameState.value ?: return
         val currentP = state.players[state.currentTurnIndex]
 
-        if (state.isCustomRoom) {
-            sounds.playUnoCall()
-            multiplayerRepo.callUno()
-            return
-        }
-
         val (nextState, success) = UnoEngine.executeCallUno(state, currentP.id)
         if (success) {
             sounds.playUnoCall()
@@ -615,12 +406,6 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     fun onCatchUno() {
         val state = _gameState.value ?: return
         val catcher = state.players.find { it.id == _localPlayerId.value } ?: return
-
-        if (state.isCustomRoom) {
-            sounds.playUnoCall()
-            multiplayerRepo.catchUno()
-            return
-        }
 
         val (nextState, success) = UnoEngine.executeCatchUno(state, catcher.id)
         if (success) {
@@ -634,11 +419,6 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         val map = _activeEmotes.value.toMutableMap()
         map[pid] = EmoteMessage(emoji, text)
         _activeEmotes.value = map
-
-        val state = _gameState.value
-        if (state != null && state.isCustomRoom) {
-            multiplayerRepo.sendEmote(emoji, text)
-        }
 
         viewModelScope.launch {
             delay(3500)
@@ -671,9 +451,9 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
 
-            // Timer expired! 20-second penalty imposed in single-player
+            // Timer expired! 20-second penalty imposed
             val currentState = _gameState.value ?: return@launch
-            if (currentState.status != GameStatus.PLAYING || _isGamePaused.value || currentState.isCustomRoom) return@launch
+            if (currentState.status != GameStatus.PLAYING || _isGamePaused.value) return@launch
 
             sounds.playPenalty()
             val (penalizedState, drawnCard) = UnoEngine.executeTimerPenalty(currentState)
@@ -708,14 +488,13 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     private fun checkAiTurn() {
         aiJob?.cancel()
         val state = _gameState.value ?: return
-        if (state.status != GameStatus.PLAYING || _isGamePaused.value || state.isCustomRoom) return
+        if (state.status != GameStatus.PLAYING || _isGamePaused.value) return
 
         val currentTurnPlayer = state.players.getOrNull(state.currentTurnIndex) ?: return
-        val isBotPlaying = currentTurnPlayer.isAi || (state.isBotTakeover && currentTurnPlayer.id != _localPlayerId.value)
-        if (!isBotPlaying) return
+        if (!currentTurnPlayer.isAi) return
 
         aiJob = viewModelScope.launch {
-            delay(1300) // Realistic bot deliberation
+            delay(1200) // Realistic bot deliberation
             val latestState = _gameState.value ?: return@launch
             if (latestState.status != GameStatus.PLAYING || _isGamePaused.value) return@launch
             if (latestState.players[latestState.currentTurnIndex].id != currentTurnPlayer.id) return@launch
@@ -771,11 +550,6 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     fun rematch() {
         val state = _gameState.value ?: return
 
-        if (state.isCustomRoom) {
-            multiplayerRepo.rematch()
-            return
-        }
-
         val p1 = state.players[0].copy(hand = emptyList(), unoCalled = false)
         val p2 = state.players[1].copy(hand = emptyList(), unoCalled = false)
         val freshState = UnoEngine.initializeMatch(p1, p2, _rules.value).copy(
@@ -788,11 +562,6 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun leaveGame() {
-        val state = _gameState.value
-        if (state != null && state.isCustomRoom) {
-            multiplayerRepo.leaveRoom()
-        }
-
         timerJob?.cancel()
         aiJob?.cancel()
         _gameState.value = null
@@ -803,7 +572,6 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         super.onCleared()
         timerJob?.cancel()
         aiJob?.cancel()
-        multiplayerRepo.leaveRoom()
         sounds.release()
     }
 }

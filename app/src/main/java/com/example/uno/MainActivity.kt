@@ -14,7 +14,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import com.example.uno.ads.AdManager
 import com.example.uno.network.NetworkMonitor
-import com.example.uno.network.NoInternetDialog
 import com.example.uno.ui.*
 import com.example.uno.ui.components.*
 import com.example.uno.ui.theme.UnoRoyaleTheme
@@ -29,10 +28,10 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
-        // Initialize Google Mobile Ads SDK with App ID
+        // Initialize Start.io Ads SDK
         AdManager.initialize(this)
 
-        // Initialize active network monitor
+        // Initialize network monitor for ad availability
         networkMonitor = NetworkMonitor(this)
 
         setContent {
@@ -49,7 +48,6 @@ class MainActivity : ComponentActivity() {
 
     override fun onPause() {
         super.onPause()
-        // Immediately pause game turns, timer and music when screen turns off or user leaves app
         viewModel.onAppBackgrounded()
     }
 
@@ -60,7 +58,6 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        // Resume activity state and check network connection
         viewModel.onAppForegrounded()
         networkMonitor.checkConnection()
     }
@@ -88,11 +85,6 @@ fun UnoRoyaleApp(
     val showFirstTimeOnboarding by viewModel.showFirstTimeOnboarding.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
     val loadingMessage by viewModel.loadingMessage.collectAsState()
-    val isNetworkConnected by networkMonitor.isConnected.collectAsState()
-    val currentRoom by viewModel.currentRoom.collectAsState()
-    val countdownSeconds by viewModel.countdownSeconds.collectAsState()
-    val socketConnectionStatus by viewModel.socketConnectionStatus.collectAsState()
-    val backendUrl by viewModel.backendUrl.collectAsState()
 
     var showRulesModal by remember { mutableStateOf(false) }
     var showHowToPlayModal by remember { mutableStateOf(false) }
@@ -122,42 +114,13 @@ fun UnoRoyaleApp(
                         onToggleSound = { viewModel.toggleSound() },
                         onToggleMusic = { viewModel.toggleMusic() },
                         onResumeFromPause = { viewModel.resumeFromPause() },
-                        onFriendJoined = { name, avatar -> viewModel.onFriendJoined(name, avatar) },
+                        onFriendJoined = { _, _ -> },
                         onRematch = { viewModel.rematch() },
                         onLeaveGame = { viewModel.leaveGame() }
                     )
                 } ?: run {
                     viewModel.navigateTo("home")
                 }
-            }
-            "lobby" -> {
-                LobbyScreen(
-                    profile = userProfile,
-                    rules = rules,
-                    currentRoom = currentRoom,
-                    connectionStatus = socketConnectionStatus,
-                    localGuestId = localPlayerId,
-                    countdownSeconds = countdownSeconds,
-                    onCreateRoom = { onResult ->
-                        viewModel.createCustomRoom(onResult)
-                    },
-                    onJoinRoom = { code, name, avatar, onJoined ->
-                        viewModel.joinCustomRoom(code, name, avatar, onJoined)
-                    },
-                    onSetReady = { isReady ->
-                        viewModel.setReady(isReady)
-                    },
-                    onStartGame = { callback ->
-                        viewModel.startMultiplayerGame(callback)
-                    },
-                    onLeaveRoom = {
-                        viewModel.multiplayerRepo.leaveRoom()
-                    },
-                    onRetryConnection = {
-                        viewModel.multiplayerRepo.connect()
-                    },
-                    onBack = { viewModel.navigateTo("home") }
-                )
             }
             "settings" -> {
                 val isNotificationsEnabled by viewModel.isNotificationsEnabled.collectAsState()
@@ -177,8 +140,9 @@ fun UnoRoyaleApp(
             else -> {
                 HomeScreen(
                     profile = userProfile,
+                    currentDifficulty = rules.aiDifficulty,
+                    onSelectDifficulty = { viewModel.setAiDifficulty(it) },
                     onStartAiMatch = { viewModel.startAiMatch() },
-                    onOpenLobby = { viewModel.navigateTo("lobby") },
                     onOpenRules = { showRulesModal = true },
                     onOpenHowToPlay = { showHowToPlayModal = true },
                     onOpenGift = { viewModel.onOpenGiftClicked(activity) },
@@ -189,16 +153,7 @@ fun UnoRoyaleApp(
         }
     }
 
-    // Interactive No Internet Connection Modal (prompts for Wi-Fi or Mobile Data)
-    if (!isNetworkConnected) {
-        NoInternetDialog(
-            onRetry = {
-                networkMonitor.checkConnection()
-            }
-        )
-    }
-
-    // Fullscreen Rewarded Video Ad Overlay (on Gift click fallback)
+    // Rewarded Video Ad fallback interactive overlay (when offline or loading)
     if (showTestAd) {
         TestAdFullscreenOverlay(
             onRewardEarned = { viewModel.onAdRewardClaimed() },
@@ -206,7 +161,7 @@ fun UnoRoyaleApp(
         )
     }
 
-    // First-Time Device Onboarding (Shown only once per device)
+    // First-Time Device Onboarding
     if (showFirstTimeOnboarding) {
         FirstTimeOnboardingModal(
             onComplete = { name, avatar ->
@@ -215,7 +170,7 @@ fun UnoRoyaleApp(
         )
     }
 
-    // Loading Overlay (Shown when setting table or connecting)
+    // Loading Overlay
     if (isLoading) {
         LoadingOverlay(message = loadingMessage)
     }

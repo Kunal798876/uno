@@ -154,10 +154,10 @@ fun SettingsScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Column {
-                                Text("Internet & Multiplayer Sync", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                                Text("Real-time online match matchmaking ready", color = Color.White.copy(alpha = 0.6f), fontSize = 11.sp)
+                                Text("Start.io Ads & Rewards", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                Text("App ID: 143270238 • Authorized app-ads.txt", color = Color.White.copy(alpha = 0.6f), fontSize = 11.sp)
                             }
-                            Icon(Icons.Default.Wifi, "Internet Connected", tint = UnoGreen)
+                            Icon(Icons.Default.Verified, "Verified Network", tint = UnoGold)
                         }
                     }
                 }

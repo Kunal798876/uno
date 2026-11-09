@@ -3,6 +3,7 @@ package com.example.uno.ads
 import android.app.Activity
 import android.content.Context
 import android.util.Log
+import android.view.View
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
@@ -12,72 +13,80 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
-import com.google.android.gms.ads.*
-import com.google.android.gms.ads.rewarded.RewardedAd
-import com.google.android.gms.ads.rewarded.RewardedAdLoadCallback
+import com.example.uno.ui.theme.UnoGold
+import com.example.uno.ui.theme.UnoYellow
+import com.startapp.sdk.ads.banner.Banner
+import com.startapp.sdk.ads.banner.BannerListener
+import com.startapp.sdk.adsbase.Ad
+import com.startapp.sdk.adsbase.StartAppAd
+import com.startapp.sdk.adsbase.StartAppSDK
+import com.startapp.sdk.adsbase.adlisteners.AdEventListener
+import com.startapp.sdk.adsbase.adlisteners.VideoListener
 
 object AdManager {
-    private const val TAG = "AdManager"
+    private const val TAG = "StartIoAdManager"
 
-    // Real AdMob IDs provided by user
-    const val APP_ID = "ca-app-pub-4862713203145414~3343479982"
-    const val BANNER_AD_UNIT_ID = "ca-app-pub-4862713203145414/8315558883"
-    const val REWARDED_AD_UNIT_ID = "ca-app-pub-4862713203145414/4132771294"
+    // Start.io Publisher / Account ID from authorized app-ads.txt
+    const val STARTIO_APP_ID = "143270238"
 
     private var isInitialized = false
-    private var rewardedAd: RewardedAd? = null
+    private var rewardedAd: StartAppAd? = null
+    private var isRewardedLoaded = false
     private var isRewardedLoading = false
 
-    fun initialize(context: Context) {
+    fun initialize(activity: Activity) {
         if (isInitialized) return
         try {
-            // Register emulator as authorized test device to allow AdMob to serve ads for real ad units on emulator
-            val requestConfig = RequestConfiguration.Builder()
-                .setTestDeviceIds(listOf(AdRequest.DEVICE_ID_EMULATOR))
-                .build()
-            MobileAds.setRequestConfiguration(requestConfig)
+            // Modern Start.io SDK 5.4.0 initialization
+            StartAppSDK.initParams(activity, STARTIO_APP_ID)
+                .setReturnAdsEnabled(false)
+                .init()
 
-            MobileAds.initialize(context) { status ->
-                isInitialized = true
-                Log.d(TAG, "Google Mobile Ads initialized: $status")
-                loadRewardedAd(context)
-            }
+            // Enable test ads for testing/emulator environment to avoid NO FILL
+            StartAppSDK.setTestAdsEnabled(true)
+            StartAppSDK.enableReturnAds(false)
+
+            isInitialized = true
+            Log.d(TAG, "Start.io SDK initialized with App ID $STARTIO_APP_ID (Test mode enabled)")
+            preloadRewardedAd(activity)
         } catch (e: Exception) {
-            Log.e(TAG, "Error initializing MobileAds", e)
+            Log.e(TAG, "Error initializing Start.io SDK: ${e.message}", e)
         }
     }
 
-    fun loadRewardedAd(context: Context, onLoaded: (() -> Unit)? = null) {
-        if (rewardedAd != null || isRewardedLoading) {
+    fun preloadRewardedAd(context: Context, onLoaded: (() -> Unit)? = null) {
+        if (isRewardedLoaded || isRewardedLoading) {
             onLoaded?.invoke()
             return
         }
-        isRewardedLoading = true
-        val adRequest = AdRequest.Builder().build()
-        RewardedAd.load(
-            context,
-            REWARDED_AD_UNIT_ID,
-            adRequest,
-            object : RewardedAdLoadCallback() {
-                override fun onAdLoaded(ad: RewardedAd) {
+
+        try {
+            isRewardedLoading = true
+            val ad = StartAppAd(context)
+            ad.loadAd(StartAppAd.AdMode.REWARDED_VIDEO, object : AdEventListener {
+                override fun onReceiveAd(adInstance: Ad) {
                     rewardedAd = ad
+                    isRewardedLoaded = true
                     isRewardedLoading = false
-                    Log.d(TAG, "RewardedAd successfully loaded")
+                    Log.d(TAG, "Start.io Rewarded Video loaded successfully")
                     onLoaded?.invoke()
                 }
 
-                override fun onAdFailedToLoad(loadAdError: LoadAdError) {
+                override fun onFailedToReceiveAd(adInstance: Ad?) {
                     rewardedAd = null
+                    isRewardedLoaded = false
                     isRewardedLoading = false
-                    Log.w(TAG, "RewardedAd failed to load: ${loadAdError.message} (code ${loadAdError.code})")
+                    Log.i(TAG, "Start.io Rewarded Video unfill/offline: ${adInstance?.errorMessage ?: "NO FILL"}")
                 }
-            }
-        )
+            })
+        } catch (e: Exception) {
+            isRewardedLoading = false
+            Log.e(TAG, "Exception preloading Start.io Rewarded Video: ${e.message}")
+        }
     }
 
     fun showRewardedAd(
@@ -85,48 +94,41 @@ object AdManager {
         onRewardEarned: () -> Unit,
         onFallbackRequired: () -> Unit
     ) {
-        val ad = rewardedAd
-        if (ad != null) {
-            ad.fullScreenContentCallback = object : FullScreenContentCallback() {
-                override fun onAdDismissedFullScreenContent() {
-                    rewardedAd = null
-                    // Preload next
-                    loadRewardedAd(activity)
+        val currentAd = rewardedAd
+        if (currentAd != null && isRewardedLoaded) {
+            currentAd.setVideoListener(object : VideoListener {
+                override fun onVideoCompleted() {
+                    Log.d(TAG, "Start.io Rewarded video completed! Rewarding user.")
+                    onRewardEarned()
                 }
+            })
 
-                override fun onAdFailedToShowFullScreenContent(adError: AdError) {
-                    Log.w(TAG, "RewardedAd failed to show: ${adError.message}")
-                    rewardedAd = null
-                    loadRewardedAd(activity)
-                    onFallbackRequired()
-                }
-            }
-            ad.show(activity) { rewardItem ->
-                Log.d(TAG, "User earned reward: ${rewardItem.amount} ${rewardItem.type}")
-                onRewardEarned()
+            val shown = currentAd.showAd()
+            isRewardedLoaded = false
+            rewardedAd = null
+            preloadRewardedAd(activity)
+
+            if (!shown) {
+                Log.i(TAG, "StartAppAd.showAd() returned false, triggering interactive reward fallback.")
+                onFallbackRequired()
             }
         } else {
-            // Ad not ready or no-fill: trigger fallback interactive overlay so user still receives experience and gift
-            loadRewardedAd(activity)
+            // Ad not filled / offline: immediately trigger interactive fallback so user experience is uninterrupted
+            preloadRewardedAd(activity)
             onFallbackRequired()
         }
     }
 }
 
 /**
- * Bottom-docked AdMob Banner Ad Composable.
- * Complies with Google AdMob placement guidelines:
- * - Positioned at bottom of screen
- * - Handles ad loading, fill, and graceful fallback
+ * Start.io Banner Ad Composable.
+ * Embeds native Start.io Banner view with listener and graceful dark-themed placeholder when no fill.
  */
 @Composable
-fun AdMobBannerAd(
-    modifier: Modifier = Modifier,
-    adUnitId: String = AdManager.BANNER_AD_UNIT_ID
+fun StartIoBannerAd(
+    modifier: Modifier = Modifier
 ) {
-    val context = LocalContext.current
-    var adLoaded by remember { mutableStateOf(false) }
-    var adError by remember { mutableStateOf<String?>(null) }
+    var bannerLoaded by remember { mutableStateOf(false) }
 
     Box(
         modifier = modifier
@@ -135,37 +137,37 @@ fun AdMobBannerAd(
         contentAlignment = Alignment.Center
     ) {
         AndroidView(
-            modifier = Modifier.fillMaxWidth().height(50.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(50.dp),
             factory = { ctx ->
-                AdView(ctx).apply {
-                    setAdSize(AdSize.BANNER)
-                    this.adUnitId = adUnitId
-                    adListener = object : AdListener() {
-                        override fun onAdLoaded() {
-                            super.onAdLoaded()
-                            adLoaded = true
-                            adError = null
-                        }
-
-                        override fun onAdFailedToLoad(error: LoadAdError) {
-                            super.onAdFailedToLoad(error)
-                            adError = error.message
-                            adLoaded = false
-                        }
+                Banner(ctx, object : BannerListener {
+                    override fun onReceiveAd(bannerView: View?) {
+                        bannerLoaded = true
+                        Log.d("StartIoBanner", "Start.io Banner loaded successfully")
                     }
-                    loadAd(AdRequest.Builder().build())
+
+                    override fun onFailedToReceiveAd(bannerView: View?) {
+                        bannerLoaded = false
+                        Log.i("StartIoBanner", "Start.io Banner not filled; using fallback presentation")
+                    }
+
+                    override fun onClick(bannerView: View?) {}
+                    override fun onImpression(bannerView: View?) {}
+                }).apply {
+                    loadAd()
                 }
             }
         )
 
-        // Sleek placeholder when ad is loading or in development/no-fill mode
-        if (!adLoaded) {
+        // Polished placeholder banner when ad is loading or offline / no-fill
+        if (!bannerLoaded) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth(0.92f)
                     .height(48.dp)
-                    .background(Color.Black.copy(alpha = 0.55f), RoundedCornerShape(8.dp))
-                    .border(1.dp, Color(0xFFD4AF37).copy(alpha = 0.4f), RoundedCornerShape(8.dp))
+                    .background(Color.Black.copy(alpha = 0.65f), RoundedCornerShape(10.dp))
+                    .border(1.dp, UnoGold.copy(alpha = 0.5f), RoundedCornerShape(10.dp))
                     .padding(horizontal = 12.dp),
                 contentAlignment = Alignment.Center
             ) {
@@ -175,20 +177,20 @@ fun AdMobBannerAd(
                 ) {
                     Box(
                         modifier = Modifier
-                            .background(Color(0xFFE52521), RoundedCornerShape(4.dp))
+                            .background(UnoYellow, RoundedCornerShape(4.dp))
                             .padding(horizontal = 5.dp, vertical = 2.dp)
                     ) {
                         Text(
-                            text = "Ad",
-                            color = Color.White,
+                            text = "START.IO",
+                            color = Color.Black,
                             fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold
+                            fontWeight = FontWeight.Black
                         )
                     }
                     Spacer(Modifier.width(8.dp))
                     Text(
-                        text = if (adError != null) "Google Mobile Ads • UNO Royale" else "Loading Sponsored Ad...",
-                        color = Color.White.copy(alpha = 0.8f),
+                        text = "Uno Royale: 2-Player Duels • AI Arcade",
+                        color = Color.White.copy(alpha = 0.9f),
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Medium
                     )

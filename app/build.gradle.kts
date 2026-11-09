@@ -67,8 +67,7 @@ dependencies {
     implementation(libs.androidx.navigation.compose)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.serialization.json)
-    implementation(libs.play.services.ads)
-    implementation(libs.socket.io.client)
+    implementation(libs.startapp.inapp.sdk)
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
