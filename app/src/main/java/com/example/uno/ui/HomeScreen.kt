@@ -470,7 +470,6 @@ fun HomeScreen(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
-                .navigationBarsPadding()
                 .padding(bottom = 2.dp),
             contentAlignment = Alignment.Center
         ) {

@@ -3,11 +3,13 @@ package com.example.uno.viewmodel
 import android.app.Activity
 import android.app.Application
 import android.content.Context
+import android.widget.Toast
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.uno.ads.UnityAdsManager
 import com.example.uno.logic.UnoEngine
 import com.example.uno.model.*
+import com.example.uno.network.NetworkConnectivityManager
 import com.example.uno.sound.SoundEffects
 import java.util.UUID
 import kotlinx.coroutines.Job
@@ -22,6 +24,8 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     private val prefs = application.getSharedPreferences("uno_device_prefs", Context.MODE_PRIVATE)
 
     val sounds = SoundEffects(application.applicationContext)
+
+    private val networkManager = NetworkConnectivityManager.getInstance(application)
 
     private val _currentScreen = MutableStateFlow("home")
     val currentScreen: StateFlow<String> = _currentScreen.asStateFlow()
@@ -91,6 +95,29 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
         if (_isMusicOn.value && !_isMuted.value) {
             sounds.startBgm()
         }
+
+        // Global network connectivity observer
+        viewModelScope.launch {
+            networkManager.isOnline.collect { online ->
+                if (!online) {
+                    // Internet connection lost: pause active gameplay immediately
+                    if (_currentScreen.value == "playing" && _gameState.value?.status == GameStatus.PLAYING) {
+                        _isGamePaused.value = true
+                        timerJob?.cancel()
+                        aiJob?.cancel()
+                    }
+                    UnityAdsManager.onNetworkLost()
+                } else {
+                    // Internet connection restored: resume active gameplay safely without restarting
+                    if (_currentScreen.value == "playing" && _gameState.value?.status == GameStatus.PLAYING) {
+                        _isGamePaused.value = false
+                        startTurnTimer()
+                        checkAiTurn()
+                    }
+                    UnityAdsManager.onNetworkRestored(application.applicationContext)
+                }
+            }
+        }
     }
 
     fun completeFirstTimeOnboarding(name: String, avatar: String) {
@@ -153,6 +180,15 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun onOpenGiftClicked(activity: Activity) {
+        if (!networkManager.isOnline.value) {
+            Toast.makeText(
+                activity,
+                "Internet connection required to load advertisements",
+                Toast.LENGTH_SHORT
+            ).show()
+            return
+        }
+
         // Native Unity Ads Rewarded Video (BP_Rewarded_Android)
         // Triggers video advertisement experience. User returns to Home screen after ad finishes or closes.
         // No rewards, stars, coins, points, or balance modifications are granted.
@@ -180,6 +216,7 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun resumeFromPause() {
+        if (!networkManager.isOnline.value) return
         _isGamePaused.value = false
         if (_currentScreen.value == "playing" && _gameState.value?.status == GameStatus.PLAYING) {
             val state = _gameState.value
@@ -196,16 +233,21 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     // =========================================================================
-    // FAST LOCAL AI MATCH (100% Offline AI Gameplay)
+    // AI MATCH (Online-Only: strictly blocks offline play)
     // =========================================================================
     fun startAiMatch(chosenDifficulty: AiDifficulty? = null) {
+        // Enforce online-only requirement
+        if (!networkManager.isOnline.value) {
+            return
+        }
+
         if (chosenDifficulty != null) {
             _rules.value = _rules.value.copy(aiDifficulty = chosenDifficulty)
         }
 
         viewModelScope.launch {
             _isLoading.value = true
-            _loadingMessage.value = "Shuffling deck & starting duel vs AI..."
+            _loadingMessage.value = "Connecting to arena & starting duel vs AI..."
             delay(400)
 
             val p1 = Player(
@@ -243,10 +285,12 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     // =========================================================================
-    // GAMEPLAY ACTIONS
+    // GAMEPLAY ACTIONS (Guarded by internet connectivity)
     // =========================================================================
 
     fun onPlayCard(cardId: String, chosenColor: CardColor? = null, sourceXOffset: Float = 0f) {
+        if (!networkManager.isOnline.value) return
+
         val state = _gameState.value ?: return
         if (state.status != GameStatus.PLAYING) return
         if (_animatingCardId.value != null || _flightAnimation.value != null) return
@@ -339,6 +383,8 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun onDrawCard() {
+        if (!networkManager.isOnline.value) return
+
         val state = _gameState.value ?: return
         val currentP = state.players[state.currentTurnIndex]
         val isLocal = currentP.id == _localPlayerId.value
@@ -369,6 +415,8 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun onSkipTurn() {
+        if (!networkManager.isOnline.value) return
+
         val state = _gameState.value ?: return
         val currentP = state.players[state.currentTurnIndex]
         if (!state.hasDrawnThisTurn) return
@@ -381,6 +429,8 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun onCallUno() {
+        if (!networkManager.isOnline.value) return
+
         val state = _gameState.value ?: return
         val currentP = state.players[state.currentTurnIndex]
 
@@ -392,6 +442,8 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun onCatchUno() {
+        if (!networkManager.isOnline.value) return
+
         val state = _gameState.value ?: return
         val catcher = state.players.find { it.id == _localPlayerId.value } ?: return
 
@@ -403,6 +455,8 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun sendEmote(emoji: String, text: String) {
+        if (!networkManager.isOnline.value) return
+
         val pid = _localPlayerId.value
         val map = _activeEmotes.value.toMutableMap()
         map[pid] = EmoteMessage(emoji, text)
@@ -536,6 +590,8 @@ class GameViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun rematch() {
+        if (!networkManager.isOnline.value) return
+
         val state = _gameState.value ?: return
 
         val p1 = state.players[0].copy(hand = emptyList(), unoCalled = false)

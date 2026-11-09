@@ -2,18 +2,20 @@ package com.example.uno
 
 import android.app.Activity
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.compose.animation.Crossfade
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import com.example.uno.ads.UnityAdsManager
-import com.example.uno.network.NetworkMonitor
+import com.example.uno.network.NetworkConnectivityManager
 import com.example.uno.ui.*
 import com.example.uno.ui.components.*
 import com.example.uno.ui.theme.UnoRoyaleTheme
@@ -22,17 +24,18 @@ import com.example.uno.viewmodel.GameViewModel
 class MainActivity : ComponentActivity() {
 
     private val viewModel: GameViewModel by viewModels()
-    private lateinit var networkMonitor: NetworkMonitor
+    private lateinit var networkConnectivityManager: NetworkConnectivityManager
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
+        // Dedicated Network Connectivity Manager enforcing validated internet
+        networkConnectivityManager = NetworkConnectivityManager.getInstance(this)
+        networkConnectivityManager.startMonitoring()
+
         // Initialize Unity Ads SDK for production (Android Game ID: 800430705, TEST_MODE = false)
         UnityAdsManager.initialize(this)
-
-        // Initialize network monitor for ad availability
-        networkMonitor = NetworkMonitor(this)
 
         setContent {
             UnoRoyaleTheme {
@@ -40,7 +43,34 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    UnoRoyaleApp(activity = this, viewModel = viewModel, networkMonitor = networkMonitor)
+                    val isOnline by networkConnectivityManager.isOnline.collectAsState()
+
+                    Box(modifier = Modifier.fillMaxSize()) {
+                        // Core application UI
+                        UnoRoyaleApp(
+                            activity = this@MainActivity,
+                            viewModel = viewModel,
+                            networkConnectivityManager = networkConnectivityManager
+                        )
+
+                        // Global Application-Wide Internet Gate
+                        // Immediately blocks gameplay, ad interactions, and all touches when offline
+                        if (!isOnline) {
+                            InternetRequiredScreen(
+                                onRetry = {
+                                    val connected = networkConnectivityManager.checkConnectivity()
+                                    if (!connected) {
+                                        Toast.makeText(
+                                            this@MainActivity,
+                                            "No validated internet connection detected. Please check Wi-Fi or mobile data.",
+                                            Toast.LENGTH_SHORT
+                                        ).show()
+                                    }
+                                    connected
+                                }
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -58,8 +88,13 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        networkConnectivityManager.checkConnectivity()
         viewModel.onAppForegrounded()
-        networkMonitor.checkConnection()
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        networkConnectivityManager.stopMonitoring()
     }
 }
 
@@ -67,7 +102,7 @@ class MainActivity : ComponentActivity() {
 fun UnoRoyaleApp(
     activity: Activity,
     viewModel: GameViewModel,
-    networkMonitor: NetworkMonitor
+    networkConnectivityManager: NetworkConnectivityManager
 ) {
     val currentScreen by viewModel.currentScreen.collectAsState()
     val gameState by viewModel.gameState.collectAsState()
@@ -151,7 +186,6 @@ fun UnoRoyaleApp(
             }
         }
     }
-
 
     // First-Time Device Onboarding
     if (showFirstTimeOnboarding) {
